@@ -664,22 +664,9 @@ impl SAS7bdat {
     }
     fn parse_metadata(&mut self) -> Result<(), SasError> {
         loop {
-            self.cached_page.len();
             if self.buf_rdr.read_exact(&mut self.cached_page).is_err(){
                 return Err(SasError::SasProperty("Failed to fully fill metapage into cache".to_string()));
             }
-            //for i in 7167..8192{
-            //    let bt = self.cached_page[i];
-            //    if bt != 0{
-            //        println!("{bt}");
-            //    }
-            //}
-           // if n == 0 {
-           //     break;
-           // }
-            //if n != dbg!(self.props.page_len) {
-            //    return Err(SasError::SasProperty("Failed to read metadatapage".to_string()));
-            //}
         match self.process_page_meta() {
             Ok(done) => if done {
                 break;
@@ -833,7 +820,6 @@ impl SAS7bdat {
 
     fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
         let mut src : Vec<u8> = Vec::new();
-        println!("getting decompression");
         if !self.compression.is_empty() && len < self.props.row_len {
             let decomp = self.get_decompressor();
             match decomp {
@@ -1025,7 +1011,8 @@ impl SAS7bdat {
                 }
                 SAS_STRING_TYPE => {
                     if self.factor_strings{
-                        println!("going to the factory");
+                        let mut s = Vec::with_capacity(n);
+                        s.extend_from_slice(&self.string_chunk[j]);
                     } else {
                         let mut s = vec!["".to_string(); n];
                         for i in 0..n{
@@ -1305,9 +1292,6 @@ fn rdc_decompress(res_len : usize, inbuf : &[u8]) -> Result<Vec<u8>, SasError>{
     Ok(res)
 }
 
-fn add(x : usize, y : usize) -> usize {
-    x + y
-}
 #[cfg(test)]
 mod tests{
     use super::*;
