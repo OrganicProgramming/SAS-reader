@@ -3,12 +3,13 @@ use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
 
 fn main() -> std::io::Result<()> {
+    let vec= [0;5];
     let sas_reader = BufReader::new(File::open("/home/jos/Downloads/rust.sas7bdat")?);
     let sas = SAS7bdat::new_sas_reader(sas_reader);
     match sas {
         Ok(mut s) => {
             println!("reading ...");
-            match s.read(1000000){
+            match s.read(10){
                 Ok(_) => println!("reading OK!!"),
                 Err(val) => match val {
                 SasError::Byte => println!("byteerror"),
@@ -527,10 +528,17 @@ impl SAS7bdat {
     fn process_col_txt_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
         off += self.props.int_len;
         let txt_block_sz = len - self.props.int_len;
+        //let txt_block_sz = self.read_int(off, TEXT_BLOCK_SIZE_LENGTH)?;
         self.read_bytes(off, txt_block_sz)?;
-        match std::str::from_utf8(&self.buf[0..txt_block_sz]){
-            Ok(nm) => self.col_name_strings.push(nm.to_string()),
-            Err(_) => return Err(SasError::SasProperty("Could not read column name".to_string())), 
+        //println!("{:?}", &self.buf[0..txt_block_sz]);
+        match String::from_utf8(self.buf[0..txt_block_sz].to_vec()){
+            Ok(val) => {
+                self.col_name_strings.push(val);
+            }
+            Err(er) => {
+                println!("{:?}",er);
+                return Err(SasError::TypeConversion);
+            }
         }
         if self.col_name_strings.len() == 1 {
             let col_name = &self.col_name_strings[0];
@@ -601,11 +609,11 @@ impl SAS7bdat {
             let col_off = self.read_int(col_name_off, COLUMN_NAME_OFFSET_LENGTH)?;
             let col_len = self.read_int(col_name_len, COLUMN_NAME_LENGTH_LENGTH)?;
             let name_str = &self.col_name_strings[idx];
-            self.col_names.push(name_str[col_off..col_off + col_len].to_string());
+            self.col_names.push(name_str[col_off .. col_off + col_len].to_string());
         }
         Ok(()) 
     }
-    fn process_col_list_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError>{
+    fn process_col_list_sub_hdr(&mut self, _off : usize, _len : usize) -> Result<(), SasError>{
         Ok(())
     }
     fn process_col_attr_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError> {
@@ -831,81 +839,6 @@ impl SAS7bdat {
         self.read_signed_int_from_buf(w)
     }
 
-//    fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
-//        let mut src : Vec<u8> = Vec::new();
-//        if !self.compression.is_empty() && len < self.props.row_len {
-//            let decomp = self.get_decompressor();
-//            match decomp {
-//                Some(f) => {
-//                    match f(self.props.row_len, &self.cached_page[off..off + len]) {
-//                        Ok(vec) => {
-//                            src = vec;
-//                        }
-//                        Err(val) => return Err(val),
-//                    }
-//                }
-//                None => {
-//                    return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
-//                }
-//            }
-//        } else {
-//            if off + len > self.cached_page.len() {
-//                let old_page = self.cached_page.clone();
-//                match self.read_next_page() {
-//                    Ok(true) => self.cached_page.extend_from_slice(&old_page),
-//                    Ok(false) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-//                    Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-//                }
-//            }
-//            src = self.cached_page[off..off + len].to_vec();
-//        };
-//        for j in 0..self.props.col_cnt{
-//            let len = self.col_data_lens[j];
-//            if len == 0{
-//                break;
-//            }
-//            let start = self.col_data_off[j];
-//            let end = start + len;
-//            let mut tmp = &src[start..end];
-//            if self.cols[j].ctype == SAS_NUM_TYPE {
-//                let s = 8 * self.cur_row_in_chunk_idx;
-//                match self.byte_order {
-//                    Endian::Little => {
-//                        let m = 8 - len;
-//                        self.byte_chunk[j][s + m .. s + 8].copy_from_slice(tmp);
-//                    }
-//                    Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
-//                }
-//            } else {
-//                if self.trim_strings{
-//                    match std::str::from_utf8(tmp){
-//                        Ok(val) => tmp = val.trim_end_matches(&['\u{0000}', '\u{0020}']).as_bytes(),
-//                        Err(_) => return Err(SasError::SasProperty("Could not convert tmp from utf-8".to_string())),
-//                    };
-//                } 
-//                //TODO set encoding
-//                match std::str::from_utf8(tmp){
-//                    Ok(x) => {
-//                        match self.string_pool_r.get(&x.to_string()) {
-//                            Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
-//                            None => {
-//                                let num = self.string_pool.len();
-//                                self.string_pool.insert(num.try_into().unwrap(), x.to_string());
-//                                self.string_pool_r.insert(x.to_string(), num.try_into().unwrap());
-//                                self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
-//                            }
-//                        }
-//                    }
-//                    Err(_) => return Err(SasError::SasProperty("Could not convert to unicode".to_string())),
-//                }
-//            }
-//        }
-//        self.cur_row_on_page_idx += 1;
-//        self.cur_row_in_chunk_idx += 1;
-//        self.cur_row_in_file_idx += 1;
-//        Ok(())
-//    }
-
     fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
         let mut src : Vec<u8> = Vec::new();
         if !self.compression.is_empty() && len < self.props.row_len {
@@ -941,34 +874,38 @@ impl SAS7bdat {
             }
             let start = self.col_data_off[j];
             let end = start + len;
-            let tmp = &src[start..end];
+            let mut tmp = &src[start..end];
             if self.cols[j].ctype == SAS_NUM_TYPE {
-                let mut res = 0.0;
+                let s = 8 * self.cur_row_in_chunk_idx;
                 match self.byte_order {
                     Endian::Little => {
-                        //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Little));
-                        res = f64::from_bytes(tmp,0, 8, &Endian::Little);
+                        let m = 8 - len;
+                        self.byte_chunk[j][s + m .. s + 8].copy_from_slice(tmp);
                     }
-                    Endian::Big => {
-                        //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Big));
-                        res = f64::from_bytes(tmp,0, 8, &Endian::Big);
-                    }
+                    Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
                 }
-                self.row_hash_map.insert(j, SasVal::Numeric(res));
             } else {
-                let mut a : String;
                 if self.trim_strings{
-                    unsafe {
-                        a = std::str::from_utf8_unchecked(tmp).trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
-                        //println!("{a}");
+                    match std::str::from_utf8(tmp){
+                        Ok(val) => tmp = val.trim_end_matches(&['\u{0000}', '\u{0020}']).as_bytes(),
+                        Err(_) => return Err(SasError::SasProperty("Could not convert tmp from utf-8".to_string())),
                     };
                 } 
                 //TODO set encoding
-                unsafe{
-                    a = std::str::from_utf8_unchecked(tmp).to_string();
-                    //println!("{a}");
+                match std::str::from_utf8(tmp){
+                    Ok(x) => {
+                        match self.string_pool_r.get(&x.to_string()) {
+                            Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
+                            None => {
+                                let num = self.string_pool.len();
+                                self.string_pool.insert(num.try_into().unwrap(), x.to_string());
+                                self.string_pool_r.insert(x.to_string(), num.try_into().unwrap());
+                                self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
+                            }
+                        }
+                    }
+                    Err(_) => return Err(SasError::SasProperty("Could not convert to unicode".to_string())),
                 }
-                self.row_hash_map.insert(j, SasVal::Text(a));
             }
         }
         self.cur_row_on_page_idx += 1;
@@ -976,6 +913,78 @@ impl SAS7bdat {
         self.cur_row_in_file_idx += 1;
         Ok(())
     }
+
+   // fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
+   //     let mut src : Vec<u8> = Vec::new();
+   //     if !self.compression.is_empty() && len < self.props.row_len {
+   //         let decomp = self.get_decompressor();
+   //         match decomp {
+   //             Some(f) => {
+   //                 match f(self.props.row_len, &self.cached_page[off..off + len]) {
+   //                     Ok(vec) => {
+   //                         src = vec;
+   //                     }
+   //                     Err(val) => return Err(val),
+   //                 }
+   //             }
+   //             None => {
+   //                 return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
+   //             }
+   //         }
+   //     } else {
+   //         if off + len > self.cached_page.len() {
+   //             let old_page = self.cached_page.clone();
+   //             match self.read_next_page() {
+   //                 Ok(true) => self.cached_page.extend_from_slice(&old_page),
+   //                 Ok(false) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
+   //                 Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
+   //             }
+   //         }
+   //         src = self.cached_page[off..off + len].to_vec();
+   //     };
+   //     for j in 0..self.props.col_cnt{
+   //         let len = self.col_data_lens[j];
+   //         if len == 0{
+   //             break;
+   //         }
+   //         let start = self.col_data_off[j];
+   //         let end = start + len;
+   //         let tmp = &src[start..end];
+   //         println!("whhhuuuutt: {}", tmp.len());
+   //         if self.cols[j].ctype == SAS_NUM_TYPE {
+   //             let mut res = 0.0;
+   //             match self.byte_order {
+   //                 Endian::Little => {
+   //                     //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Little));
+   //                     res = f64::from_bytes(tmp,0, 8, &Endian::Little);
+   //                 }
+   //                 Endian::Big => {
+   //                     //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Big));
+   //                     res = f64::from_bytes(tmp,0, 8, &Endian::Big);
+   //                 }
+   //             }
+   //             self.row_hash_map.insert(j, SasVal::Numeric(res));
+   //         } else {
+   //             let mut a : String;
+   //             if self.trim_strings{
+   //                 unsafe {
+   //                     a = std::str::from_utf8_unchecked(tmp).trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
+   //                     //println!("{a}");
+   //                 };
+   //             } 
+   //             //TODO set encoding
+   //             unsafe{
+   //                 a = std::str::from_utf8_unchecked(tmp).to_string();
+   //                 //println!("{a}");
+   //             }
+   //             self.row_hash_map.insert(j, SasVal::Text(a));
+   //         }
+   //     }
+   //     self.cur_row_on_page_idx += 1;
+   //     self.cur_row_in_chunk_idx += 1;
+   //     self.cur_row_in_file_idx += 1;
+   //     Ok(())
+   // }
 
     fn read_page_hdr(&mut self) -> Result<(), SasError>{
         let bit_off = self.props.page_bit_off;
@@ -1089,9 +1098,9 @@ impl SAS7bdat {
                     for k in 0..n{
                         vec[k] = f64::from_le_bytes(buf[k * 8..(k + 1) * 8].try_into().unwrap());
                     }
-                    //for el in vec{
-                    //    println!("{el}");
-                    //}
+                    for el in vec{
+                        println!("{el}");
+                    }
                 }
                 SAS_STRING_TYPE => {
                     if self.factor_strings{
@@ -1105,9 +1114,9 @@ impl SAS7bdat {
                                 None => s[i] = "".to_string(),
                             }
                         }
-       //                 for st in s{
-       //                     println!("{st}");
-       //                 }
+                        for st in s{
+                            println!("{st}");
+                        }
                     }
                 }
                 _ => println!("non existing datatype"), //Err(SasError::SasProperty(format!("Non existing datatype for column {}", self.col_names[j]))), 
@@ -1121,19 +1130,19 @@ impl SAS7bdat {
         }
 
         //allocation of new buffers
-       // self.string_pool = HashMap::new();
-       // self.string_pool_r = HashMap::new();
+        self.string_pool = HashMap::new();
+        self.string_pool_r = HashMap::new();
 
-       // self.byte_chunk = vec![Vec::new();self.props.col_cnt];
-       // self.string_chunk = vec![Vec::new();self.props.col_cnt];
+        self.byte_chunk = vec![Vec::new();self.props.col_cnt];
+        self.string_chunk = vec![Vec::new();self.props.col_cnt];
 
-       // for j in 0..self.props.col_cnt{
-       //     match self.col_types[j]{
-       //         SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
-       //         SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
-       //         _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
-       //     }
-       // }
+        for j in 0..self.props.col_cnt{
+            match self.col_types[j]{
+                SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
+                SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
+                _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
+            }
+        }
         self.cur_row_in_chunk_idx = 0;
         for _ in 0..num_rows{
             match self.read_line(){
@@ -1142,7 +1151,7 @@ impl SAS7bdat {
                 Ok(false) => (),
             }
         }
-       // self.chunk_to_series();
+        self.chunk_to_series();
         Ok(())
     }
 
