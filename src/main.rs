@@ -3,13 +3,12 @@ use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
 
 fn main() -> std::io::Result<()> {
-    let vec= [0;5];
-    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/rust.sas7bdat")?);
+    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
     let sas = SAS7bdat::new_sas_reader(sas_reader);
     match sas {
         Ok(mut s) => {
             println!("reading ...");
-            match s.read(10){
+            match s.read(1000000){
                 Ok(_) => println!("reading OK!!"),
                 Err(val) => match val {
                 SasError::Byte => println!("byteerror"),
@@ -84,7 +83,7 @@ struct SAS7bdat{
     string_chunk : Vec<Vec<u64>>,
     byte_chunk : Vec<Vec<u8>>,
     cur_row_in_chunk_idx : usize,
-    col_name_strings : Vec<String>,
+    col_name_strings : Vec<Vec<u8>>,
     col_data_off : Vec<usize>,
     col_data_lens : Vec<usize>,
     cols : Vec<Col>,
@@ -341,7 +340,25 @@ fn min(x : usize, y : usize) -> usize {
     }
 }
 
+fn contains_bytes(bytes : &Vec<u8>, txt : &str) -> bool{
+    let txt_bytes = txt.as_bytes();
+    let txt_len = txt_bytes.len();
+    for i in 0..bytes.len()- txt_bytes.len(){
+        if &bytes[i..i + txt_len] == txt_bytes{
+            return true;
+        }
+    }
+    false
+}
+
 impl SAS7bdat {
+    fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
+        match std::str::from_utf8(bytes){
+            //TODO also use derived encoding of SAS file to perform correct byte translation
+            Ok(x) => Ok(x.to_string()),
+            Err(_) => Err(SasError::SasProperty("Invalid UTF-8".to_string())),
+        }
+    }
     fn string_factor_map(&self) -> &HashMap<u64, String>{
         &self.string_pool
     }
@@ -531,21 +548,16 @@ impl SAS7bdat {
         //let txt_block_sz = self.read_int(off, TEXT_BLOCK_SIZE_LENGTH)?;
         self.read_bytes(off, txt_block_sz)?;
         //println!("{:?}", &self.buf[0..txt_block_sz]);
-        match String::from_utf8(self.buf[0..txt_block_sz].to_vec()){
-            Ok(val) => {
-                self.col_name_strings.push(val);
-            }
-            Err(er) => {
-                println!("{:?}",er);
-                return Err(SasError::TypeConversion);
-            }
-        }
+        self.col_name_strings.push(self.buf[0..txt_block_sz].to_vec());
         if self.col_name_strings.len() == 1 {
             let col_name = &self.col_name_strings[0];
             let mut compression_literal = "".to_string();
-            if col_name.contains("SASYZCRL"){
+            //if col_name.conta ("SASYZCRL"){
+            if contains_bytes(col_name, "SASYZCRL"){
+                println!("gotcha");
                 compression_literal = "SASYZCRL".to_string();
-            } else if col_name.contains("SASYZCR2"){
+            } else if contains_bytes(col_name, "SASYZCR2") {
+                println!("gotcha");
                 compression_literal = "SASYZCR2".to_string();
             }
             self.compression = compression_literal;
@@ -609,7 +621,8 @@ impl SAS7bdat {
             let col_off = self.read_int(col_name_off, COLUMN_NAME_OFFSET_LENGTH)?;
             let col_len = self.read_int(col_name_len, COLUMN_NAME_LENGTH_LENGTH)?;
             let name_str = &self.col_name_strings[idx];
-            self.col_names.push(name_str[col_off .. col_off + col_len].to_string());
+            //TODO refactor
+            self.col_names.push(self.utf_8(&name_str[col_off .. col_off + col_len])?);
         }
         Ok(()) 
     }
@@ -635,6 +648,7 @@ impl SAS7bdat {
         }
         Ok(())
     }
+
     fn process_format_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError>{
         let int_len = self.props.int_len;
         let txt_sub_hdr_format = off + COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
@@ -652,21 +666,21 @@ impl SAS7bdat {
         let label_start = self.read_int(col_label_offset, COLUMN_LABEL_OFFSET_LENGTH)?;
         let label_len = self.read_int(col_label_len, COLUMN_LABEL_LENGTH_LENGTH)?;
         let label_names = &self.col_name_strings[label_idx];
-        let col_label = &label_names[label_start .. label_start + label_len];
+        let col_label = self.utf_8(&label_names[label_start .. label_start + label_len])?;
         let format_names = &self.col_name_strings[format_idx];
-        let col_format = &format_names[format_start..format_start + format_len];
+        let col_format = self.utf_8(&format_names[format_start..format_start + format_len])?;
         let cur_col_number = self.cols.len(); 
 
         let col = Col{
             col_id: cur_col_number,
             name: self.col_names[cur_col_number].clone(),
-            label: col_label.to_string(),
-            fmt: col_format.to_string(), 
+            label: col_label.clone(),
+            fmt: col_format.clone(), 
             ctype: self.col_types[cur_col_number],
             len: self.col_data_lens[cur_col_number],
         };
-        self.col_labels.push(col_label.to_string());
-        self.col_formats.push(col_format.to_string());
+        self.col_labels.push(col_label);
+        self.col_formats.push(col_format);
         self.cols.push(col);
         Ok(())
     }
@@ -1098,9 +1112,9 @@ impl SAS7bdat {
                     for k in 0..n{
                         vec[k] = f64::from_le_bytes(buf[k * 8..(k + 1) * 8].try_into().unwrap());
                     }
-                    for el in vec{
-                        println!("{el}");
-                    }
+       //             for el in vec{
+       //                 println!("{el}");
+       //             }
                 }
                 SAS_STRING_TYPE => {
                     if self.factor_strings{
@@ -1114,9 +1128,9 @@ impl SAS7bdat {
                                 None => s[i] = "".to_string(),
                             }
                         }
-                        for st in s{
-                            println!("{st}");
-                        }
+       //                 for st in s{
+       //                     println!("{st}");
+       //                 }
                     }
                 }
                 _ => println!("non existing datatype"), //Err(SasError::SasProperty(format!("Non existing datatype for column {}", self.col_names[j]))), 
@@ -1387,22 +1401,12 @@ fn rdc_decompress(res_len : usize, inbuf : &[u8]) -> Result<Vec<u8>, SasError>{
     Ok(res)
 }
 
+
 #[cfg(test)]
 mod tests{
     use super::*;
 
     #[test]
-    fn i16_conversion(){
-        let v = vec![0,144];
-        let b = b"\x000\x00".to_vec();
-        
-        match std::str::from_utf8(&b) {
-            Ok(val) => println!("I did it!!! :: {val}"),
-            Err(_) => println!("fat error"),
-        }
-        assert_eq!(1,1);
-        assert_eq!(i16::from_bytes(&v, 0, 2, &Endian::Little),i16::from_bytes(&v, 0, 2, &Endian::Little));
-        //assert_eq!(i16::from_bytes(&v, 0, 2, &Endian::Little), (3*256 + 255));
-        //assert_eq!(i16::from_bytes(&v, 0, 2, &Endian::Big), (1 + 255*256));
+    fn test_bytes(){
     }
 }
