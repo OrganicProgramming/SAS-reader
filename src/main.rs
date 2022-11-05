@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
+use encoding::{Encoding, DecoderTrap};
+use encoding::all::WINDOWS_1252;
 
 fn main() -> std::io::Result<()> {
     let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
@@ -102,7 +104,6 @@ struct SAS7bdat{
 //    }
 //}
 
-
 #[derive(Default)]
 struct SasProperties{
     int_len : usize,
@@ -120,6 +121,7 @@ struct SasProperties{
     creator_proc : String,
     col_cnt : usize,
 }
+
 #[derive(Default)]
 struct Col {
     col_id : usize,
@@ -353,15 +355,19 @@ fn contains_bytes(bytes : &Vec<u8>, txt : &str) -> bool{
 
 impl SAS7bdat {
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
-        match std::str::from_utf8(bytes){
-            //TODO also use derived encoding of SAS file to perform correct byte translation
-            Ok(x) => Ok(x.to_string()),
+        match WINDOWS_1252.decode(bytes, DecoderTrap::Strict){
+            Ok(x) => {
+                println!("Windows : {x}");
+                Ok(x)
+            }
             Err(_) => Err(SasError::SasProperty("Invalid UTF-8".to_string())),
         }
     }
+
     fn string_factor_map(&self) -> &HashMap<u64, String>{
         &self.string_pool
     }
+
     fn get_decompressor(&self)  -> Option<Decompressor>{
         match self.compression.as_str() {
             "SASYZCRL" => Some(rle_decompress),
@@ -369,6 +375,7 @@ impl SAS7bdat {
             _ => None,
         }
     }
+
     fn get_properties(&mut self) -> Result<(), SasError>{
         self.props = SasProperties::default();
         self.read_bytes(0,288)?;
@@ -621,7 +628,6 @@ impl SAS7bdat {
             let col_off = self.read_int(col_name_off, COLUMN_NAME_OFFSET_LENGTH)?;
             let col_len = self.read_int(col_name_len, COLUMN_NAME_LENGTH_LENGTH)?;
             let name_str = &self.col_name_strings[idx];
-            //TODO refactor
             self.col_names.push(self.utf_8(&name_str[col_off .. col_off + col_len])?);
         }
         Ok(()) 
@@ -800,8 +806,8 @@ impl SAS7bdat {
             Endian::Little => f64::from_le_bytes(self.buf[off..(off + w)].try_into().unwrap()),
         }
     }
-    fn read_int_from_buf(&self, w : usize) -> Result<usize, SasError> {
 
+    fn read_int_from_buf(&self, w : usize) -> Result<usize, SasError> {
         match w {
             1 => match (i8::from_bytes(&self.buf, 0, 1, &self.byte_order)).try_into(){
                 Ok(val) => Ok(val),
@@ -888,7 +894,7 @@ impl SAS7bdat {
             }
             let start = self.col_data_off[j];
             let end = start + len;
-            let mut tmp = &src[start..end];
+            let tmp = &src[start..end];
             if self.cols[j].ctype == SAS_NUM_TYPE {
                 let s = 8 * self.cur_row_in_chunk_idx;
                 match self.byte_order {
@@ -899,26 +905,20 @@ impl SAS7bdat {
                     Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
                 }
             } else {
+                let mut st = self.utf_8(tmp)?;
                 if self.trim_strings{
-                    match std::str::from_utf8(tmp){
-                        Ok(val) => tmp = val.trim_end_matches(&['\u{0000}', '\u{0020}']).as_bytes(),
-                        Err(_) => return Err(SasError::SasProperty("Could not convert tmp from utf-8".to_string())),
-                    };
+                    st = st.trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
                 } 
                 //TODO set encoding
-                match std::str::from_utf8(tmp){
-                    Ok(x) => {
-                        match self.string_pool_r.get(&x.to_string()) {
-                            Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
-                            None => {
-                                let num = self.string_pool.len();
-                                self.string_pool.insert(num.try_into().unwrap(), x.to_string());
-                                self.string_pool_r.insert(x.to_string(), num.try_into().unwrap());
-                                self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
-                            }
-                        }
+                //
+                match self.string_pool_r.get(&st) {
+                    Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
+                    None => {
+                        let num = self.string_pool.len();
+                        self.string_pool.insert(num.try_into().unwrap(), st.clone());
+                        self.string_pool_r.insert(st, num.try_into().unwrap());
+                        self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
                     }
-                    Err(_) => return Err(SasError::SasProperty("Could not convert to unicode".to_string())),
                 }
             }
         }
@@ -1139,7 +1139,7 @@ impl SAS7bdat {
     }
 
     fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
-        if self.cur_row_in_file_idx >= self.row_count{
+        if self.cur_row_in_file_idx >= dbg!(self.row_count){
             return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
         }
 
@@ -1402,11 +1402,11 @@ fn rdc_decompress(res_len : usize, inbuf : &[u8]) -> Result<Vec<u8>, SasError>{
 }
 
 
-#[cfg(test)]
-mod tests{
-    use super::*;
-
-    #[test]
-    fn test_bytes(){
-    }
-}
+//#[cfg(test)]
+//mod tests{
+//    use super::*;
+//
+//    #[test]
+//    fn test_bytes(){
+//    }
+//}
