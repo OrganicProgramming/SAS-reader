@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
 use encoding::{Encoding, DecoderTrap};
-use encoding::all::WINDOWS_1252;
+use encoding::all::*;
+use encoding::codec::singlebyte::SingleByteEncoding;
+use encoding::codec::utf_8::UTF8Encoding;
 
 fn main() -> std::io::Result<()> {
     let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
@@ -48,6 +50,9 @@ enum SasVal{
     Text(String),
 }
 
+type Decompressor = fn(usize, &[u8]) -> Result<Vec<u8>, SasError>;
+type Decoder = fn(&[u8]) -> Result<String, SasError>;
+
 //#[derive(Default)]
 struct SAS7bdat{
     col_formats : Vec<String>,
@@ -68,7 +73,7 @@ struct SAS7bdat{
     u64 : bool,
     byte_order : Endian,
     compression : String,
-    text_decoder : u8,
+    text_decoder : Encodings,
     row_count : usize,
     col_types : Vec<u16>,
     col_labels : Vec<String>,
@@ -332,7 +337,6 @@ enum SasError{
 
 //fn byte_trim_end( buf : &[u8], trim_char : [u8]) -> &[u8]{
 //}
-type Decompressor = fn(usize, &[u8]) -> Result<Vec<u8>, SasError>;
 
 fn min(x : usize, y : usize) -> usize {
     if x < y {
@@ -353,20 +357,44 @@ fn contains_bytes(bytes : &Vec<u8>, txt : &str) -> bool{
     false
 }
 
+enum Encodings{
+    SingleByte(SingleByteEncoding),
+    MultiByte(UTF8Encoding),
+}
+
+impl Encodings{
+    fn decode(&self, bytes : &[u8]) -> Result<String, SasError>{
+        match self{
+            Encodings::SingleByte(x) => {
+                match x.decode(bytes, DecoderTrap::Strict){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::SasProperty("UTF8 conversion failed".to_string())),
+                }
+            }
+            Encodings::MultiByte(x) =>  {
+                match x.decode(bytes, DecoderTrap::Strict){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::SasProperty("UTF8 conversion failed".to_string())),
+                }
+            }
+        }
+    }
+}
+
 impl SAS7bdat {
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
-        match WINDOWS_1252.decode(bytes, DecoderTrap::Strict){
+        match self.text_decoder.decode(bytes){
             Ok(x) => {
                 println!("Windows : {x}");
                 Ok(x)
             }
-            Err(_) => Err(SasError::SasProperty("Invalid UTF-8".to_string())),
+            Err(_) => Err(SasError::SasProperty("Failed encoding to UTF-8 string".to_string())),
         }
     }
 
-    fn string_factor_map(&self) -> &HashMap<u64, String>{
-        &self.string_pool
-    }
+    //fn string_factor_map(&self) -> &HashMap<u64, String>{
+    //    &self.string_pool
+    //}
 
     fn get_decompressor(&self)  -> Option<Decompressor>{
         match self.compression.as_str() {
@@ -416,8 +444,17 @@ impl SAS7bdat {
         }
         self.read_bytes(ENCODING_OFFSET, ENCODING_LENGTH)?;
         match self.encoding_map.get(&usize::from(self.buf[0])) {
-            Some(x) => self.file_encoding = x.to_string(),
-            None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
+            Some(x) => {
+                self.file_encoding = x.to_string();
+                match *x {
+                    "wlatin1" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1252),
+                    "wlatin2" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1250),
+                    "utf-8" => self.text_decoder = Encodings::MultiByte(UTF8Encoding),
+                    _ => return Err(SasError::TypeConversion),
+                }
+            }
+                None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
+            
         }
         self.read_bytes(DATASET_OFFSET, DATASET_LENGTH)?;
         match std::str::from_utf8(&self.buf[0..DATASET_LENGTH]){
@@ -1189,7 +1226,7 @@ impl SAS7bdat {
             u64 : false,
             byte_order : Endian::default(),
             compression : String::default(),
-            text_decoder : u8::default(),
+            text_decoder : Encodings::MultiByte(UTF8Encoding),
             row_count : usize::default(),
             col_types : Vec::default(),
             col_labels : Vec::default(),
@@ -1230,9 +1267,9 @@ fn get_encoding_map() -> HashMap<usize, &'static str>{
                   (29, "latin1"),
                   (20, "utf-8"),
                   (33, "cyrillic"),
-                  (60, "wlatin2"),
+                  (60, "wlatin2"),//windows1250
                   (61, "wcyrillic"),
-                  (62, "wlatin1"),
+                  (62, "wlatin1"),//windows1252
                   (90, "ebcdic870")])
 }
 
