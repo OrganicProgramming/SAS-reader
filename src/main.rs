@@ -8,21 +8,24 @@ use encoding::codec::utf_8::UTF8Encoding;
 
 fn main() -> std::io::Result<()> {
     let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tume.sas7bdat")?);
-    let sas = SAS7bdat::new_sas_reader(sas_reader);
+    let sas = SAS7bdat::new(sas_reader);
     match sas {
         Ok(mut s) => {
-            println!("reading ...");
-            match s.read(1000000){
-                Ok(_) => println!("reading OK!!"),
-                Err(val) => match val {
-                SasError::Byte => println!("byteerror"),
-                SasError::Read => println!("readerror"),
-                SasError::SasProperty(st) => println!("{st}"),
-                SasError::TypeConversion => println!("conversion error"),
-                SasError::ByteLen => println!("Bytelen Error"),
-                SasError::Cmd => println!("Cmd error"),
-            },
+            for el in s{
+                println!("snoepie");
             }
+            println!("reading ...");
+            //match s.read(1000001){
+            //    Ok(_) => println!("reading OK!!"),
+            //    Err(val) => match val {
+            //    SasError::Byte => println!("byteerror"),
+            //    SasError::Read => println!("readerror"),
+            //    SasError::SasProperty(st) => println!("{st}"),
+            //    SasError::TypeConversion => println!("conversion error"),
+            //    SasError::ByteLen => println!("Bytelen Error"),
+            //    SasError::Cmd => println!("Cmd error"),
+            //},
+            //}
         }
         Err(val) => {
             match val {
@@ -99,7 +102,6 @@ struct SAS7bdat{
     hdr_sig_map : HashMap<Vec<u8>, usize>, 
     string_pool : HashMap<u64, String>,
     string_pool_r : HashMap<String, u64>,
-    row_hash_map : HashMap<usize, SasVal>,
 }
 
 #[derive(Default)]
@@ -328,9 +330,6 @@ enum SasError{
     SasProperty(String),
 }
 
-//fn byte_trim_end( buf : &[u8], trim_char : [u8]) -> &[u8]{
-//}
-
 fn min(x : usize, y : usize) -> usize {
     if x < y {
         x
@@ -370,6 +369,23 @@ impl Encodings{
                     Err(_) => Err(SasError::SasProperty("UTF8 conversion failed".to_string())),
                 }
             }
+        }
+    }
+}
+
+impl Iterator for SAS7bdat{
+    type Item = Result<String, SasError>;
+
+    fn next(&mut self) -> Option<Self::Item>{
+        if self.cur_row_in_file_idx == 0 || self.cur_row_in_chunk_idx >= 1000{
+            match self.read(1000){
+                Ok(()) => Some(Ok("pony".to_string())),
+                Err(e) => Some(Err(e)),
+            };
+            self.cur_row_in_file_idx += 1;
+            Some(Ok("pony".to_string()))
+        } else {
+            None
         }
     }
 }
@@ -440,12 +456,12 @@ impl SAS7bdat {
                     _ => return Err(SasError::TypeConversion),
                 }
             }
-                None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
-            
+            None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
+
         }
         self.read_bytes(DATASET_OFFSET, DATASET_LENGTH)?;
         self.name = self.utf_8(&self.buf[0..DATASET_LENGTH])?;
-        
+
         self.read_bytes(FILE_TYPE_OFFSET, FILE_TYPE_LENGTH)?;
         self.file_type = self.utf_8(&self.buf[0..FILE_TYPE_LENGTH])?;
         self.date_created = self.read_float(DATE_CREATED_OFFSET, DATE_CREATED_LENGTH);
@@ -469,7 +485,7 @@ impl SAS7bdat {
         self.props.page_len = self.read_int(PAGE_SIZE_OFFSET + align1, PAGE_SIZE_LENGTH)?;
         self.read_bytes(SAS_RELEASE_OFFSET + total_align, SAS_RELEASE_LENGTH)?;
         self.sas_release = self.utf_8(&self.buf[0..SAS_RELEASE_LENGTH])?;
-        
+
         self.read_bytes(SAS_SERVER_TYPE_OFFSET + total_align, SAS_SERVER_TYPE_LENGTH)?;
         self.server_type = self.utf_8(&self.buf[0..SAS_SERVER_TYPE_LENGTH])?;
 
@@ -581,10 +597,6 @@ impl SAS7bdat {
             }
             self.read_bytes(off1, self.props.lcp)?;
             compression_literal = self.utf_8(&self.buf[0..8])?;
-            //match std::str::from_utf8(&self.buf[0..8]){
-            //    Ok(vr) => compression_literal = vr.trim_end_matches('\x00').to_string(),
-            //    Err(_) => return Err(SasError::SasProperty("Could not read compression literal".to_string())),
-            //}
 
             let x = compression_literal.as_str();
             if x.is_empty(){
@@ -596,11 +608,6 @@ impl SAS7bdat {
                 self.read_bytes(off1, self.props.lcp)?;
                 self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcp])?;
 
-                //match std::str::from_utf8(&self.buf[0..self.props.lcp]){
-                //    Ok(x) => self.props.creator_proc = x.to_string(),
-                //    Err(_) => return Err(SasError::SasProperty("Could not read create proc!".to_string())),
-                //}
-
             } else if x == "SASYZCRL"{
                 off1 = off + 40;
                 if self.u64{
@@ -608,11 +615,6 @@ impl SAS7bdat {
                 }
                 self.read_bytes(off1, self.props.lcp)?;
                 self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcp])?;
-
-                //match std::str::from_utf8(&self.buf[0..self.props.lcp]){
-                //    Ok(x) => self.props.creator_proc = x.to_string(),
-                //    Err(_) => return Err(SasError::SasProperty("Could not create RLE create proc".to_string())),
-                //} 
 
             } else if self.props.lcs > 0 {
                 self.props.lcp = 0;
@@ -623,809 +625,736 @@ impl SAS7bdat {
                 self.read_bytes(off1, self.props.lcs)?;
                 self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcs])?;
 
-                //match std::str::from_utf8(&self.buf[0..self.props.lcs]) {
-                //    Ok(x) => self.props.creator_proc = x.to_string(),
-                //    Err(_) => return Err(SasError::SasProperty("Could not read lcp create proc".to_string())),
-                //}
-                
             }
         };
         Ok(())
-    }
+        }
 
-    fn process_col_name_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
-        let int_len = self.props.int_len;
-        off += int_len;
-        let col_name_ptr_cnt = (len - 2 * int_len - 12) / 8;
-        for i in 0..col_name_ptr_cnt{
-            let txt_sub_hdr = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_TEXT_SUBHEADER_OFFSET;
-            let col_name_off = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_OFFSET_OFFSET;
-            let col_name_len = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_LENGTH_OFFSET;
-            let idx = self.read_int(txt_sub_hdr, COLUMN_NAME_TEXT_SUBHEADER_LENGTH)?;
-            let col_off = self.read_int(col_name_off, COLUMN_NAME_OFFSET_LENGTH)?;
-            let col_len = self.read_int(col_name_len, COLUMN_NAME_LENGTH_LENGTH)?;
-            let name_str = &self.col_name_strings[idx];
-            self.col_names.push(self.utf_8(&name_str[col_off .. col_off + col_len])?);
-        }
-        Ok(()) 
-    }
-    fn process_col_list_sub_hdr(&mut self, _off : usize, _len : usize) -> Result<(), SasError>{
-        Ok(())
-    }
-    fn process_col_attr_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError> {
-        let int_len = self.props.int_len;
-        let col_attrs_vecs_cnt = (len - 2 * int_len - 12)/ (int_len + 8);
-        for i in 0..col_attrs_vecs_cnt{
-            let col_data_off = off + int_len + COLUMN_DATA_OFFSET_OFFSET + i * (int_len + 8);
-            let col_data_len = off + 2 * int_len + COLUMN_DATA_LENGTH_OFFSET + i * (int_len + 8);
-            let col_types = off + 2 * int_len + COLUMN_TYPE_OFFSET + i * (int_len + 8);
-            let mut x = self.read_int(col_data_off, int_len)?;
-            self.col_data_off.push(x);
-            x = self.read_int(col_data_len, COLUMN_DATA_LENGTH_LENGTH)?;
-            self.col_data_lens.push(x);
-            x = self.read_int(col_types, COLUMN_TYPE_LENGTH)?;
-            match x{
-                1 => self.col_types.push(SAS_NUM_TYPE),
-                _ => self.col_types.push(SAS_STRING_TYPE),
+        fn process_col_name_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
+            let int_len = self.props.int_len;
+            off += int_len;
+            let col_name_ptr_cnt = (len - 2 * int_len - 12) / 8;
+            for i in 0..col_name_ptr_cnt{
+                let txt_sub_hdr = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_TEXT_SUBHEADER_OFFSET;
+                let col_name_off = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_OFFSET_OFFSET;
+                let col_name_len = off + COLUMN_NAME_POINTER_LENGTH * (i + 1) + COLUMN_NAME_LENGTH_OFFSET;
+                let idx = self.read_int(txt_sub_hdr, COLUMN_NAME_TEXT_SUBHEADER_LENGTH)?;
+                let col_off = self.read_int(col_name_off, COLUMN_NAME_OFFSET_LENGTH)?;
+                let col_len = self.read_int(col_name_len, COLUMN_NAME_LENGTH_LENGTH)?;
+                let name_str = &self.col_name_strings[idx];
+                self.col_names.push(self.utf_8(&name_str[col_off .. col_off + col_len])?);
             }
+            Ok(()) 
         }
-        Ok(())
-    }
+        fn process_col_list_sub_hdr(&mut self, _off : usize, _len : usize) -> Result<(), SasError>{
+            Ok(())
+        }
+        fn process_col_attr_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError> {
+            let int_len = self.props.int_len;
+            let col_attrs_vecs_cnt = (len - 2 * int_len - 12)/ (int_len + 8);
+            for i in 0..col_attrs_vecs_cnt{
+                let col_data_off = off + int_len + COLUMN_DATA_OFFSET_OFFSET + i * (int_len + 8);
+                let col_data_len = off + 2 * int_len + COLUMN_DATA_LENGTH_OFFSET + i * (int_len + 8);
+                let col_types = off + 2 * int_len + COLUMN_TYPE_OFFSET + i * (int_len + 8);
+                let mut x = self.read_int(col_data_off, int_len)?;
+                self.col_data_off.push(x);
+                x = self.read_int(col_data_len, COLUMN_DATA_LENGTH_LENGTH)?;
+                self.col_data_lens.push(x);
+                x = self.read_int(col_types, COLUMN_TYPE_LENGTH)?;
+                match x{
+                    1 => self.col_types.push(SAS_NUM_TYPE),
+                    _ => self.col_types.push(SAS_STRING_TYPE),
+                }
+            }
+            Ok(())
+        }
 
-    fn process_format_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError>{
-        let int_len = self.props.int_len;
-        let txt_sub_hdr_format = off + COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
-        let col_format_off = off + COLUMN_FORMAT_OFFSET_OFFSET + 3 * int_len;
-        let col_format_len = off+  COLUMN_FORMAT_LENGTH_OFFSET + 3 * int_len;
-        let txt_sub_hdr_label = off + COLUMN_LABEL_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
-        let col_label_offset = off + COLUMN_LABEL_OFFSET_OFFSET + 3 * int_len;
-        let col_label_len = off + COLUMN_LABEL_LENGTH_OFFSET + 3 * int_len;
-        let mut format_idx = self.read_int(txt_sub_hdr_format, COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_LENGTH)?;
-        format_idx = min(format_idx, self.col_name_strings.len() - 1);
-        let format_start = self.read_int(col_format_off, COLUMN_FORMAT_OFFSET_LENGTH)?;
-        let format_len = self.read_int(col_format_len, COLUMN_FORMAT_LENGTH_LENGTH)?;
-        let mut label_idx = self.read_int(txt_sub_hdr_label, COLUMN_LABEL_TEXT_SUBHEADER_INDEX_LENGTH)?;
-        label_idx = min(label_idx, self.col_name_strings.len() - 1);
-        let label_start = self.read_int(col_label_offset, COLUMN_LABEL_OFFSET_LENGTH)?;
-        let label_len = self.read_int(col_label_len, COLUMN_LABEL_LENGTH_LENGTH)?;
-        let label_names = &self.col_name_strings[label_idx];
-        let col_label = self.utf_8(&label_names[label_start .. label_start + label_len])?;
-        let format_names = &self.col_name_strings[format_idx];
-        let col_format = self.utf_8(&format_names[format_start..format_start + format_len])?;
-        let cur_col_number = self.cols.len(); 
+        fn process_format_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError>{
+            let int_len = self.props.int_len;
+            let txt_sub_hdr_format = off + COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
+            let col_format_off = off + COLUMN_FORMAT_OFFSET_OFFSET + 3 * int_len;
+            let col_format_len = off+  COLUMN_FORMAT_LENGTH_OFFSET + 3 * int_len;
+            let txt_sub_hdr_label = off + COLUMN_LABEL_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
+            let col_label_offset = off + COLUMN_LABEL_OFFSET_OFFSET + 3 * int_len;
+            let col_label_len = off + COLUMN_LABEL_LENGTH_OFFSET + 3 * int_len;
+            let mut format_idx = self.read_int(txt_sub_hdr_format, COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_LENGTH)?;
+            format_idx = min(format_idx, self.col_name_strings.len() - 1);
+            let format_start = self.read_int(col_format_off, COLUMN_FORMAT_OFFSET_LENGTH)?;
+            let format_len = self.read_int(col_format_len, COLUMN_FORMAT_LENGTH_LENGTH)?;
+            let mut label_idx = self.read_int(txt_sub_hdr_label, COLUMN_LABEL_TEXT_SUBHEADER_INDEX_LENGTH)?;
+            label_idx = min(label_idx, self.col_name_strings.len() - 1);
+            let label_start = self.read_int(col_label_offset, COLUMN_LABEL_OFFSET_LENGTH)?;
+            let label_len = self.read_int(col_label_len, COLUMN_LABEL_LENGTH_LENGTH)?;
+            let label_names = &self.col_name_strings[label_idx];
+            let col_label = self.utf_8(&label_names[label_start .. label_start + label_len])?;
+            let format_names = &self.col_name_strings[format_idx];
+            let col_format = self.utf_8(&format_names[format_start..format_start + format_len])?;
+            let cur_col_number = self.cols.len(); 
 
-        let col = Col{
-            col_id: cur_col_number,
-            name: self.col_names[cur_col_number].clone(),
-            label: col_label.clone(),
-            fmt: col_format.clone(), 
-            ctype: self.col_types[cur_col_number],
-            len: self.col_data_lens[cur_col_number],
-        };
-        self.col_labels.push(col_label);
-        self.col_formats.push(col_format);
-        self.cols.push(col);
-        Ok(())
-    }
-    fn row_count(&self) -> usize {
-        self.row_count
-    }
-    fn col_names(&self) -> &Vec<String>{
-        &self.col_names
-    }
-    fn col_label(&self) -> &Vec<String>{
-        &self.col_labels
-    }
-    fn col_types(&self) -> &Vec<u16>{
-        &self.col_types
-    }
-    fn parse_metadata(&mut self) -> Result<(), SasError> {
-        loop {
-            if self.buf_rdr.read_exact(&mut self.cached_page).is_err(){
-                return Err(SasError::SasProperty("Failed to fully fill metapage into cache".to_string()));
-            }
-        match self.process_page_meta() {
-            Ok(done) => if done {
-                break;
-            }
-            Err(val) => return Err(val),
+            let col = Col{
+                col_id: cur_col_number,
+                name: self.col_names[cur_col_number].clone(),
+                label: col_label.clone(),
+                fmt: col_format.clone(), 
+                ctype: self.col_types[cur_col_number],
+                len: self.col_data_lens[cur_col_number],
+            };
+            self.col_labels.push(col_label);
+            self.col_formats.push(col_format);
+            self.cols.push(col);
+            Ok(())
         }
-        };
-        Ok(())
-    }
-
-    fn is_page_metamix_amd(&self, page_type : isize) -> bool{
-        matches!(page_type, PAGE_META_TYPE | 512 | 640 | PAGE_AMD_TYPE)
-    }
-    fn is_page_mix_type(&self, val : isize) -> bool{
-        matches!(val, 512 | 640)
-    }
-    fn is_page_mix_data_type(&self, val : isize) -> bool {
-        matches!(val, 512 | 640 | 256)
-    }
-    fn check_page_type(&self, cur_page : isize) -> bool {
-        !matches!(cur_page, PAGE_META_TYPE | PAGE_DATA_TYPE | 512 | 640)
-    }
-    fn process_page_meta(&mut self) -> Result<bool, SasError> {
-        if let Err(msg) = self.read_page_hdr(){
-            return Err(msg);
+        fn row_count(&self) -> usize {
+            self.row_count
         }
-        if self.is_page_metamix_amd(self.cur_page_type){
-            if let Err(msg) = self.process_page_metadata() {
-                return Err(msg);
-            }
+        fn col_names(&self) -> &Vec<String>{
+            &self.col_names
         }
-        Ok(self.is_page_mix_data_type(self.cur_page_type) || !self.cur_page_data_sub_hdr_pointers.is_empty())
-    }
-
-    fn process_sub_hdr_counts(&self, _off : usize, _len : usize) -> Result<(), SasError>{
-        Ok(())
-    }
-
-    fn process_sub_hdr(&mut self, sub_hdr_idx : usize, ptr : SubHdrPtr) -> Result<(), SasError>{
-        let off = ptr.off;
-        let len = ptr.len;
-        
-        match sub_hdr_idx {
-            ROW_SIZE_IDX => self.process_row_size_sub_hdr(off, len),
-            COL_SIZE_IDX => self.process_col_size_sub_hdr(off, len),
-            COL_TEXT_IDX => self.process_col_txt_sub_hdr(off, len),
-            COL_NAME_IDX => self.process_col_name_sub_hdr(off, len),
-            COL_ATTR_IDX => self.process_col_attr_sub_hdr(off, len),
-            FMT_AND_LABEL_IDX => self.process_format_sub_hdr(off, len),
-            COL_LIST_IDX => self.process_col_list_sub_hdr(off, len),
-            SUB_HDR_CNT_IDX => self.process_sub_hdr_counts(off, len),
-            DATA_SUBHDR_IDX => {
-                self.cur_page_data_sub_hdr_pointers.push(ptr);
-                Ok(())
-            }
-            _ => Err(SasError::SasProperty("Invalid processor index type".to_string())),
+        fn col_label(&self) -> &Vec<String>{
+            &self.col_labels
         }
-    }
-
-    fn process_page_metadata(&mut self) -> Result<(), SasError>{
-        let bit_off = self.props.page_bit_off;
-        for i in 0..self.cur_page_sub_hdr_count{
-            let ptr = self.process_sub_hdr_ptrs(SUBHEADER_POINTERS_OFFSET + bit_off, i)?;
-            if ptr.len == 0 || ptr.compression == TRUNCATED_SUBHEADER_ID {
-                continue;
-            }
-            let sub_hdr_sig = self.read_sub_hdr_sig(ptr.off)?;
-            let sub_hdr_idx = self.get_sub_hdr_idx(sub_hdr_sig, ptr.compression, ptr.ptype)?;
-            self.process_sub_hdr(sub_hdr_idx, ptr)?;
+        fn col_types(&self) -> &Vec<u16>{
+            &self.col_types
         }
-        Ok(())
-    }
-
-    fn ensure_buf_len(&mut self, len : usize){
-        if self.buf.len() < len {
-            self.buf.resize(2 * len, 0);
-        }
-    }
-    fn read_bytes(&mut self, off : usize, len : usize) -> Result<(), SasError> {
-        self.ensure_buf_len(len);
-        if self.cached_page.is_empty(){
-            self.buf_rdr.seek(SeekFrom::Start(off.try_into().unwrap())).expect("Failed to seek file");
-            if self.buf_rdr.read_exact(&mut self.buf[0..len]).is_err(){
-                return Err(SasError::Byte);
-            }
-        } else {
-            if off + len > self.cached_page.len(){
-                return Err(SasError::Read);
-            }
-            self.buf[0..len].copy_from_slice(&self.cached_page[off..(off+len)]);
-        }
-        Ok(())
-    }
-    fn read_float(&self, off : usize, w : usize) -> f64{
-        match self.byte_order {
-            Endian::Big => f64::from_be_bytes(self.buf[off..(off + w)].try_into().unwrap()),
-            Endian::Little => f64::from_le_bytes(self.buf[off..(off + w)].try_into().unwrap()),
-        }
-    }
-
-    fn read_int_from_buf(&self, w : usize) -> Result<usize, SasError> {
-        match w {
-            1 => match (i8::from_bytes(&self.buf, 0, 1, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            2 => match (i16::from_bytes(&self.buf, 0, 2, &self.byte_order)).try_into() {
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            4 => match (i32::from_bytes(&self.buf, 0, 4, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            8 => match (i64::from_bytes(&self.buf, 0, 8, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            _ => panic!("Invalid int width"),
-        }
-    }
-    fn read_int(&mut self, off :usize, w :usize) -> Result<usize, SasError> {
-        self.read_bytes(off, w)?;
-        self.read_int_from_buf(w)
-    }
-    fn read_signed_int_from_buf(&self, w : usize) -> Result<isize, SasError> {
-
-        match w {
-            1 => match (i8::from_bytes(&self.buf, 0, 1, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            2 => match (i16::from_bytes(&self.buf, 0, 2, &self.byte_order)).try_into() {
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            4 => match (i32::from_bytes(&self.buf, 0, 4, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            8 => match (i64::from_bytes(&self.buf, 0, 8, &self.byte_order)).try_into(){
-                Ok(val) => Ok(val),
-                Err(_) => Err(SasError::TypeConversion),
-            }
-            _ => panic!("Invalid int width"),
-        }
-    }
-    fn read_signed_int(&mut self, off :usize, w :usize) -> Result<isize, SasError> {
-        self.read_bytes(off, w)?;
-        self.read_signed_int_from_buf(w)
-    }
-
-    fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
-        let mut src : Vec<u8> = Vec::new();
-        if !self.compression.is_empty() && len < self.props.row_len {
-            let decomp = self.get_decompressor();
-            match decomp {
-                Some(f) => {
-                    match f(self.props.row_len, &self.cached_page[off..off + len]) {
-                        Ok(vec) => {
-                            src = vec;
-                        }
-                        Err(val) => return Err(val),
+        fn parse_metadata(&mut self) -> Result<(), SasError> {
+            loop {
+                if self.buf_rdr.read_exact(&mut self.cached_page).is_err(){
+                    return Err(SasError::SasProperty("Failed to fully fill metapage into cache".to_string()));
+                }
+                match self.process_page_meta() {
+                    Ok(done) => if done {
+                        break;
                     }
-                }
-                None => {
-                    return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
-                }
-            }
-        } else {
-            if off + len > self.cached_page.len() {
-                let old_page = self.cached_page.clone();
-                match self.read_next_page() {
-                    Ok(true) => self.cached_page.extend_from_slice(&old_page),
-                    Ok(false) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-                    Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-                }
-            }
-            src = self.cached_page[off..off + len].to_vec();
-        };
-        for j in 0..self.props.col_cnt{
-            let len = self.col_data_lens[j];
-            if len == 0{
-                break;
-            }
-            let start = self.col_data_off[j];
-            let end = start + len;
-            let tmp = &src[start..end];
-            if self.cols[j].ctype == SAS_NUM_TYPE {
-                let s = 8 * self.cur_row_in_chunk_idx;
-                match self.byte_order {
-                    Endian::Little => {
-                        let m = 8 - len;
-                        self.byte_chunk[j][s + m .. s + 8].copy_from_slice(tmp);
-                    }
-                    Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
-                }
-            } else {
-                let mut st = self.utf_8(tmp)?;
-                if self.trim_strings{
-                    st = st.trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
-                } 
-
-                match self.string_pool_r.get(&st) {
-                    Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
-                    None => {
-                        let num = self.string_pool.len();
-                        self.string_pool.insert(num.try_into().unwrap(), st.clone());
-                        self.string_pool_r.insert(st, num.try_into().unwrap());
-                        self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
-                    }
-                }
-            }
-        }
-        self.cur_row_on_page_idx += 1;
-        self.cur_row_in_chunk_idx += 1;
-        self.cur_row_in_file_idx += 1;
-        Ok(())
-    }
-
-   // fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
-   //     let mut src : Vec<u8> = Vec::new();
-   //     if !self.compression.is_empty() && len < self.props.row_len {
-   //         let decomp = self.get_decompressor();
-   //         match decomp {
-   //             Some(f) => {
-   //                 match f(self.props.row_len, &self.cached_page[off..off + len]) {
-   //                     Ok(vec) => {
-   //                         src = vec;
-   //                     }
-   //                     Err(val) => return Err(val),
-   //                 }
-   //             }
-   //             None => {
-   //                 return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
-   //             }
-   //         }
-   //     } else {
-   //         if off + len > self.cached_page.len() {
-   //             let old_page = self.cached_page.clone();
-   //             match self.read_next_page() {
-   //                 Ok(true) => self.cached_page.extend_from_slice(&old_page),
-   //                 Ok(false) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-   //                 Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
-   //             }
-   //         }
-   //         src = self.cached_page[off..off + len].to_vec();
-   //     };
-   //     for j in 0..self.props.col_cnt{
-   //         let len = self.col_data_lens[j];
-   //         if len == 0{
-   //             break;
-   //         }
-   //         let start = self.col_data_off[j];
-   //         let end = start + len;
-   //         let tmp = &src[start..end];
-   //         println!("whhhuuuutt: {}", tmp.len());
-   //         if self.cols[j].ctype == SAS_NUM_TYPE {
-   //             let mut res = 0.0;
-   //             match self.byte_order {
-   //                 Endian::Little => {
-   //                     //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Little));
-   //                     res = f64::from_bytes(tmp,0, 8, &Endian::Little);
-   //                 }
-   //                 Endian::Big => {
-   //                     //println!("{}",f64::from_bytes(tmp,0, 8, &Endian::Big));
-   //                     res = f64::from_bytes(tmp,0, 8, &Endian::Big);
-   //                 }
-   //             }
-   //             self.row_hash_map.insert(j, SasVal::Numeric(res));
-   //         } else {
-   //             let mut a : String;
-   //             if self.trim_strings{
-   //                 unsafe {
-   //                     a = std::str::from_utf8_unchecked(tmp).trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
-   //                     //println!("{a}");
-   //                 };
-   //             } 
-   //             //TODO set encoding
-   //             unsafe{
-   //                 a = std::str::from_utf8_unchecked(tmp).to_string();
-   //                 //println!("{a}");
-   //             }
-   //             self.row_hash_map.insert(j, SasVal::Text(a));
-   //         }
-   //     }
-   //     self.cur_row_on_page_idx += 1;
-   //     self.cur_row_in_chunk_idx += 1;
-   //     self.cur_row_in_file_idx += 1;
-   //     Ok(())
-   // }
-
-    fn read_page_hdr(&mut self) -> Result<(), SasError>{
-        let bit_off = self.props.page_bit_off;
-        self.cached_page.len();
-        self.cur_page_block_count = self.read_int(BLOCK_COUNT_OFFSET + bit_off, BLOCK_COUNT_LENGTH)?;
-        self.cur_page_sub_hdr_count = self.read_int(SUBHEADER_COUNT_OFFSET + bit_off, SUBHEADER_COUNT_LENGTH)?;
-        //TODO factor out read_signed_int
-        self.cur_page_type = self.read_signed_int(PAGE_TYPE_OFFSET + bit_off, PAGE_TYPE_LENGTH)?;
-        Ok(())
-    }
-
-    fn read_next_page(&mut self) -> Result<bool, SasError>{
-        self.cur_page_data_sub_hdr_pointers = Vec::with_capacity(10);
-        self.cached_page = vec![0;self.props.page_len];
-        let n = self.buf_rdr.read_exact(&mut self.cached_page);
-        match n {
-            Ok(()) => (),
-            //number of red bytes smaller than cached_page length
-            Err(er) if er.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Ok(true);
-            }
-            Err(_) => return Err(SasError::Read),
-        }
-
-        self.read_page_hdr()?;
-        if self.cur_page_type == PAGE_META_TYPE {
-            self.process_page_metadata()?;
-        }
-        if self.check_page_type(self.cur_page_type) {
-            return self.read_next_page();
-        }
-        Ok(false)
-    }
-
-    fn read_line(&mut self) -> Result<bool, SasError> {
-        let bit_off = self.props.page_bit_off;
-        let sub_hdr_ptr_len = self.props.sub_hdr_ptr_len;
-
-        if self.cached_page.is_empty() {
-            self.buf_rdr.seek(SeekFrom::Start(self.props.hdr_len.try_into().unwrap())).expect("Could not read page!");
-            self.read_next_page()?;
-        }
-
-        loop {
-            if self.cur_page_type == PAGE_META_TYPE {
-                if self.cur_row_on_page_idx >= self.cur_page_data_sub_hdr_pointers.len() {
-                    match self.read_next_page(){
-                        Ok(true) => return Ok(true),
-                        Ok(false) =>{ 
-                            self.cur_row_on_page_idx = 0;
-                            continue;
-                        }
-                        Err(val) => return Err(val),
-                    }
-                }
-                let cur_sub_hdr_ptr = &self.cur_page_data_sub_hdr_pointers[self.cur_row_on_page_idx];
-                match self.process_byte_array_with_data(cur_sub_hdr_ptr.off, cur_sub_hdr_ptr.len){
-                    Ok(()) => return Ok(false),
                     Err(val) => return Err(val),
                 }
-            } else if self.is_page_mix_type(self.cur_page_type) {
-                let mut align_corr = bit_off + SUBHEADER_POINTERS_OFFSET +
-                    self.cur_page_sub_hdr_count * sub_hdr_ptr_len % 8;
-                if self.no_align_correction {
-                    align_corr = 0;
+            };
+            Ok(())
+        }
+
+        fn is_page_metamix_amd(&self, page_type : isize) -> bool{
+            matches!(page_type, PAGE_META_TYPE | 512 | 640 | PAGE_AMD_TYPE)
+        }
+        fn is_page_mix_type(&self, val : isize) -> bool{
+            matches!(val, 512 | 640)
+        }
+        fn is_page_mix_data_type(&self, val : isize) -> bool {
+            matches!(val, 512 | 640 | 256)
+        }
+        fn check_page_type(&self, cur_page : isize) -> bool {
+            !matches!(cur_page, PAGE_META_TYPE | PAGE_DATA_TYPE | 512 | 640)
+        }
+        fn process_page_meta(&mut self) -> Result<bool, SasError> {
+            if let Err(msg) = self.read_page_hdr(){
+                return Err(msg);
+            }
+            if self.is_page_metamix_amd(self.cur_page_type){
+                if let Err(msg) = self.process_page_metadata() {
+                    return Err(msg);
                 }
-                let off = bit_off + SUBHEADER_POINTERS_OFFSET + 
-                    self.cur_page_sub_hdr_count * sub_hdr_ptr_len +
-                    self.cur_row_on_page_idx * self.props.row_len +
-                    align_corr;
-                if self.process_byte_array_with_data(off, self.props.row_len).is_err() {
-                    return Err(SasError::SasProperty("Could not process bytearray".to_string()));
+            }
+            Ok(self.is_page_mix_data_type(self.cur_page_type) || !self.cur_page_data_sub_hdr_pointers.is_empty())
+        }
+
+        fn process_sub_hdr_counts(&self, _off : usize, _len : usize) -> Result<(), SasError>{
+            Ok(())
+        }
+
+        fn process_sub_hdr(&mut self, sub_hdr_idx : usize, ptr : SubHdrPtr) -> Result<(), SasError>{
+            let off = ptr.off;
+            let len = ptr.len;
+
+            match sub_hdr_idx {
+                ROW_SIZE_IDX => self.process_row_size_sub_hdr(off, len),
+                COL_SIZE_IDX => self.process_col_size_sub_hdr(off, len),
+                COL_TEXT_IDX => self.process_col_txt_sub_hdr(off, len),
+                COL_NAME_IDX => self.process_col_name_sub_hdr(off, len),
+                COL_ATTR_IDX => self.process_col_attr_sub_hdr(off, len),
+                FMT_AND_LABEL_IDX => self.process_format_sub_hdr(off, len),
+                COL_LIST_IDX => self.process_col_list_sub_hdr(off, len),
+                SUB_HDR_CNT_IDX => self.process_sub_hdr_counts(off, len),
+                DATA_SUBHDR_IDX => {
+                    self.cur_page_data_sub_hdr_pointers.push(ptr);
+                    Ok(())
                 }
-                if self.cur_row_on_page_idx == min(self.row_count, self.props.mix_page_row_cnt){
-                    match self.read_next_page(){
-                        Ok(true) => return Ok(true),
-                        Err(val) => return Err(val),
-                        Ok(false) => {
-                            self.cur_row_on_page_idx = 0;
-                        }
-                    }
-                }
-                return Ok(false);
-            } else if self.cur_page_type == PAGE_DATA_TYPE {
-                if self.process_byte_array_with_data(
-                    bit_off + SUBHEADER_POINTERS_OFFSET + self.cur_row_on_page_idx * self.props.row_len,
-                    self.props.row_len).is_err(){
-                    return Err(SasError::SasProperty("Failed to process bytes".to_string()));
-                }
-                if self.cur_row_on_page_idx == self.cur_page_block_count {
-                    match self.read_next_page(){
-                        Ok(true) => return Ok(true),
-                        Err(val) => return Err(val),
-                        Ok(false) => {
-                            self.cur_row_on_page_idx = 0;
-                        }
-                    }
-                }
-                return Ok(false);
-            } else {
-                return Err(SasError::SasProperty(format!("unknown page type : {}", self.cur_page_type)));
+                _ => Err(SasError::SasProperty("Invalid processor index type".to_string())),
             }
         }
-    }
 
-    fn chunk_to_series(&self){
-        let n = self.cur_row_in_chunk_idx;
-        for j in 0..self.props.col_cnt{
-            println!("{}", self.col_names[j]);
-            match self.col_types[j]{
-                SAS_NUM_TYPE => {
-                    let mut vec = vec![0.0;n];
-                    let buf = &self.byte_chunk[j][0..8 * n];
-                    for k in 0..n{
-                        vec[k] = f64::from_le_bytes(buf[k * 8..(k + 1) * 8].try_into().unwrap());
-                    }
-       //             for el in vec{
-       //                 println!("{el}");
-       //             }
+        fn process_page_metadata(&mut self) -> Result<(), SasError>{
+            let bit_off = self.props.page_bit_off;
+            for i in 0..self.cur_page_sub_hdr_count{
+                let ptr = self.process_sub_hdr_ptrs(SUBHEADER_POINTERS_OFFSET + bit_off, i)?;
+                if ptr.len == 0 || ptr.compression == TRUNCATED_SUBHEADER_ID {
+                    continue;
                 }
-                SAS_STRING_TYPE => {
-                    if self.factor_strings{
-                        let mut s = Vec::with_capacity(n);
-                        s.extend_from_slice(&self.string_chunk[j]);
-                    } else {
-                        let mut s = vec!["".to_string(); n];
-                        for i in 0..n{
-                            match self.string_pool.get(&self.string_chunk[j][i]){
-                                Some(x) => s[i] = x.to_string(),
-                                None => s[i] = "".to_string(),
-                            }
-                        }
-       //                 for st in s{
-       //                     println!("{st}");
-       //                 }
-                    }
-                }
-                _ => println!("non existing datatype"), //Err(SasError::SasProperty(format!("Non existing datatype for column {}", self.col_names[j]))), 
+                let sub_hdr_sig = self.read_sub_hdr_sig(ptr.off)?;
+                let sub_hdr_idx = self.get_sub_hdr_idx(sub_hdr_sig, ptr.compression, ptr.ptype)?;
+                self.process_sub_hdr(sub_hdr_idx, ptr)?;
+            }
+            Ok(())
+        }
+
+        fn ensure_buf_len(&mut self, len : usize){
+            if self.buf.len() < len {
+                self.buf.resize(2 * len, 0);
             }
         }
-    }
-
-    fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
-        if self.cur_row_in_file_idx >= self.row_count{
-            return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
-        }
-
-        //allocation of new buffers
-        self.string_pool = HashMap::new();
-        self.string_pool_r = HashMap::new();
-
-        self.byte_chunk = vec![Vec::new();self.props.col_cnt];
-        self.string_chunk = vec![Vec::new();self.props.col_cnt];
-
-        for j in 0..self.props.col_cnt{
-            match self.col_types[j]{
-                SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
-                SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
-                _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
-            }
-        }
-        self.cur_row_in_chunk_idx = 0;
-        for _ in 0..num_rows{
-            match self.read_line(){
-                Ok(true) => break,
-                Err(val) => return Err(val),
-                Ok(false) => (),
-            }
-        }
-        self.chunk_to_series();
-        Ok(())
-    }
-
-    fn new_sas_reader(reader : std::io::BufReader<File>) ->Result<SAS7bdat, SasError> {
-        let mut sas = SAS7bdat{
-            col_formats : Vec::default(),
-            trim_strings : false,
-            convert_dates : false,
-            factor_strings : false,
-            no_align_correction : false,
-            date_created : 0.,
-            date_modified : 0.,
-            name : String::default(),
-            platform : String::default(),
-            sas_release : String::default(),
-            server_type : String::default(),
-            os_type : String::default(),
-            os_name : String::default(),
-            file_type : String::default(),
-            file_encoding : String::default(),
-            u64 : false,
-            byte_order : Endian::default(),
-            compression : String::default(),
-            text_decoder : Encodings::MultiByte(UTF8Encoding),
-            row_count : usize::default(),
-            col_types : Vec::default(),
-            col_labels : Vec::default(),
-            col_names : Vec::default(),
-            buf : Vec::default(),
-            buf_rdr : reader,
-            cached_page : Vec::default(),
-            cur_page_type : isize::default(),
-            cur_page_block_count : usize::default(),
-            cur_page_sub_hdr_count : usize::default(),
-            cur_row_in_file_idx : usize::default(),
-            cur_row_on_page_idx : usize::default(),
-            cur_page_data_sub_hdr_pointers : Vec::default(),
-            string_chunk : Vec::default(),
-            byte_chunk : Vec::default(),
-            cur_row_in_chunk_idx : usize::default(),
-            col_name_strings : Vec::default(),
-            col_data_off : Vec::default(),
-            col_data_lens : Vec::default(),
-            cols : Vec::default(),
-            props : SasProperties::default(),
-            encoding_map : get_encoding_map(),
-            hdr_sig_map : get_hdr_sig_map(),
-            string_pool : HashMap::default(),
-            string_pool_r :HashMap::default(),
-            row_hash_map : HashMap::default(),
-        };
-        sas.get_properties()?;
-        sas.cached_page = vec![0;sas.props.page_len];
-        sas.parse_metadata()?;
-        Ok(sas)
-    }
-}
-
-
-fn get_encoding_map() -> HashMap<usize, &'static str>{
-    HashMap::from([
-                  (29, "latin1"),
-                  (20, "utf-8"),
-                  (33, "cyrillic"),
-                  (60, "wlatin2"),//windows1250
-                  (61, "wcyrillic"),
-                  (62, "wlatin1"),//windows1252
-                  (90, "ebcdic870")])
-}
-
-fn rle_decompress(res_len : usize, input : &[u8]) -> Result<Vec<u8>, SasError>{
-    let mut res : Vec<u8> = Vec::with_capacity(res_len);
-    let mut inbuf = input;
-    while !inbuf.is_empty() {
-        let control_byte = inbuf[0] & 0xF0;
-        let end_of_first_byte = usize::from(inbuf[0] & 0x0F);
-        inbuf = &inbuf[1..];
-        match control_byte {
-            0x00 => {
-                if end_of_first_byte != 0 {
+        fn read_bytes(&mut self, off : usize, len : usize) -> Result<(), SasError> {
+            self.ensure_buf_len(len);
+            if self.cached_page.is_empty(){
+                self.buf_rdr.seek(SeekFrom::Start(off.try_into().unwrap())).expect("Failed to seek file");
+                if self.buf_rdr.read_exact(&mut self.buf[0..len]).is_err(){
                     return Err(SasError::Byte);
                 }
-                let nbytes = usize::from(inbuf[0]) + 64;
-                inbuf = &inbuf[1..];  
-                res.extend_from_slice(inbuf);
-                inbuf = &inbuf[nbytes..];
-            }
-            0x40 => {
-                let nbytes = end_of_first_byte * 16 + usize::from(inbuf[0]);
-                inbuf = &inbuf[1..];
-                for _ in 0..nbytes{
-                    res.push(inbuf[0]);
+            } else {
+                if off + len > self.cached_page.len(){
+                    return Err(SasError::Read);
                 }
-                inbuf = &inbuf[1..];
+                self.buf[0..len].copy_from_slice(&self.cached_page[off..(off+len)]);
             }
-            0x60 => {
-                let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
-                inbuf = &inbuf[1..];
-                for _ in 0..nbytes{
-                    res.push(0x20);
-                }
+            Ok(())
+        }
+        fn read_float(&self, off : usize, w : usize) -> f64{
+            match self.byte_order {
+                Endian::Big => f64::from_be_bytes(self.buf[off..(off + w)].try_into().unwrap()),
+                Endian::Little => f64::from_le_bytes(self.buf[off..(off + w)].try_into().unwrap()),
             }
-            0x70 => {
-                let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
-                inbuf = &inbuf[1..];
-                for _ in 0..nbytes{
-                    res.push(0x00);
-                }
-            }
-            0x80 => {
-                let nbytes = end_of_first_byte + 1;
-                res.extend_from_slice(&inbuf[0..nbytes]);
-                inbuf = &inbuf[nbytes..];
-            }
-            0x90 => {
-                let nbytes = end_of_first_byte + 17;
-                res.extend_from_slice(&inbuf[0..nbytes]);
-                inbuf = &inbuf[nbytes..];
-            }
-            0xA0 => {
-                let nbytes = end_of_first_byte + 33;
-                res.extend_from_slice(&inbuf[0..nbytes]);
-                inbuf = &inbuf[nbytes..];
-            }
-            0xB0 => {
-                let nbytes = end_of_first_byte + 49;
-                res.extend_from_slice(&inbuf[0..nbytes]);
-                inbuf = &inbuf[nbytes..];
+        }
 
+        fn read_int_from_buf(&self, w : usize) -> Result<usize, SasError> {
+            match w {
+                1 => match (i8::from_bytes(&self.buf, 0, 1, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                2 => match (i16::from_bytes(&self.buf, 0, 2, &self.byte_order)).try_into() {
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                4 => match (i32::from_bytes(&self.buf, 0, 4, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                8 => match (i64::from_bytes(&self.buf, 0, 8, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                _ => panic!("Invalid int width"),
             }
-            0xC0 => {
-                let nbytes = end_of_first_byte + 3;
-                let x = inbuf[0];
-                inbuf = &inbuf[1..];
-                for _ in 0..nbytes{
-                    res.push(x);
+        }
+        fn read_int(&mut self, off :usize, w :usize) -> Result<usize, SasError> {
+            self.read_bytes(off, w)?;
+            self.read_int_from_buf(w)
+        }
+        fn read_signed_int_from_buf(&self, w : usize) -> Result<isize, SasError> {
+
+            match w {
+                1 => match (i8::from_bytes(&self.buf, 0, 1, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                2 => match (i16::from_bytes(&self.buf, 0, 2, &self.byte_order)).try_into() {
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                4 => match (i32::from_bytes(&self.buf, 0, 4, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                8 => match (i64::from_bytes(&self.buf, 0, 8, &self.byte_order)).try_into(){
+                    Ok(val) => Ok(val),
+                    Err(_) => Err(SasError::TypeConversion),
+                }
+                _ => panic!("Invalid int width"),
+            }
+        }
+        fn read_signed_int(&mut self, off :usize, w :usize) -> Result<isize, SasError> {
+            self.read_bytes(off, w)?;
+            self.read_signed_int_from_buf(w)
+        }
+
+        fn process_byte_array_with_data(&mut self, off : usize, len : usize) -> Result<(), SasError>{
+            let mut src : Vec<u8> = Vec::new();
+            if !self.compression.is_empty() && len < self.props.row_len {
+                let decomp = self.get_decompressor();
+                match decomp {
+                    Some(f) => {
+                        match f(self.props.row_len, &self.cached_page[off..off + len]) {
+                            Ok(vec) => {
+                                src = vec;
+                            }
+                            Err(val) => return Err(val),
+                        }
+                    }
+                    None => {
+                        return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
+                    }
+                }
+            } else {
+                if off + len > self.cached_page.len() {
+                    let old_page = self.cached_page.clone();
+                    match self.read_next_page() {
+                        Ok(true) => self.cached_page.extend_from_slice(&old_page),
+                        Ok(false) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
+                        Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
+                    }
+                }
+                src = self.cached_page[off..off + len].to_vec();
+            };
+
+            for j in 0..self.props.col_cnt{
+                let len = self.col_data_lens[j];
+                if len == 0{
+                    break;
+                }
+
+                let start = self.col_data_off[j];
+                let end = start + len;
+                let tmp = &src[start..end];
+                //Handle numeric types: TODO add proper date conversion
+                if self.cols[j].ctype == SAS_NUM_TYPE {
+                    let s = 8 * self.cur_row_in_chunk_idx;
+                    match self.byte_order {
+                        Endian::Little => {
+                            let m = 8 - len;
+                            self.byte_chunk[j][s + m .. s + 8].copy_from_slice(tmp);
+                        }
+                        Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
+                    }
+                    //Handle String types
+                } else {
+                    let mut st = self.utf_8(tmp)?;
+                    if self.trim_strings{
+                        st = st.trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
+                    } 
+
+                    match self.string_pool_r.get(&st) {
+                        Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
+                        None => {
+                            let num = self.string_pool.len();
+                            self.string_pool.insert(num.try_into().unwrap(), st.clone());
+                            self.string_pool_r.insert(st, num.try_into().unwrap());
+                            self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
+                        }
+                    }
                 }
             }
-            0xD0 => {
-                let nbytes = end_of_first_byte + 2;
-                for _ in 0..nbytes{
-                    res.push(0x40);
+
+            self.cur_row_on_page_idx += 1;
+            self.cur_row_in_chunk_idx += 1;
+            self.cur_row_in_file_idx += 1;
+            Ok(())
+        }
+
+        fn read_page_hdr(&mut self) -> Result<(), SasError>{
+            let bit_off = self.props.page_bit_off;
+            self.cached_page.len();
+            self.cur_page_block_count = self.read_int(BLOCK_COUNT_OFFSET + bit_off, BLOCK_COUNT_LENGTH)?;
+            self.cur_page_sub_hdr_count = self.read_int(SUBHEADER_COUNT_OFFSET + bit_off, SUBHEADER_COUNT_LENGTH)?;
+            //TODO factor out read_signed_int
+            self.cur_page_type = self.read_signed_int(PAGE_TYPE_OFFSET + bit_off, PAGE_TYPE_LENGTH)?;
+            Ok(())
+        }
+
+        fn read_next_page(&mut self) -> Result<bool, SasError>{
+            self.cur_page_data_sub_hdr_pointers = Vec::with_capacity(10);
+            self.cached_page = vec![0;self.props.page_len];
+            let n = self.buf_rdr.read_exact(&mut self.cached_page);
+            match n {
+                Ok(()) => (),
+                //number of red bytes smaller than cached_page length
+                Err(er) if er.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(true);
+                }
+                Err(_) => return Err(SasError::Read),
+            }
+
+            self.read_page_hdr()?;
+            if self.cur_page_type == PAGE_META_TYPE {
+                self.process_page_metadata()?;
+            }
+            if self.check_page_type(self.cur_page_type) {
+                return self.read_next_page();
+            }
+            Ok(false)
+        }
+
+        fn read_line(&mut self) -> Result<bool, SasError> {
+            let bit_off = self.props.page_bit_off;
+            let sub_hdr_ptr_len = self.props.sub_hdr_ptr_len;
+
+            if self.cached_page.is_empty() {
+                self.buf_rdr.seek(SeekFrom::Start(self.props.hdr_len.try_into().unwrap())).expect("Could not read page!");
+                self.read_next_page()?;
+            }
+
+            loop {
+                if self.cur_page_type == PAGE_META_TYPE {
+                    if self.cur_row_on_page_idx >= self.cur_page_data_sub_hdr_pointers.len() {
+                        match self.read_next_page(){
+                            Ok(true) => return Ok(true),
+                            Ok(false) =>{ 
+                                self.cur_row_on_page_idx = 0;
+                                continue;
+                            }
+                            Err(val) => return Err(val),
+                        }
+                    }
+                    let cur_sub_hdr_ptr = &self.cur_page_data_sub_hdr_pointers[self.cur_row_on_page_idx];
+                    match self.process_byte_array_with_data(cur_sub_hdr_ptr.off, cur_sub_hdr_ptr.len){
+                        Ok(()) => return Ok(false),
+                        Err(val) => return Err(val),
+                    }
+                } else if self.is_page_mix_type(self.cur_page_type) {
+                    let mut align_corr = bit_off + SUBHEADER_POINTERS_OFFSET +
+                        self.cur_page_sub_hdr_count * sub_hdr_ptr_len % 8;
+                    if self.no_align_correction {
+                        align_corr = 0;
+                    }
+                    let off = bit_off + SUBHEADER_POINTERS_OFFSET + 
+                        self.cur_page_sub_hdr_count * sub_hdr_ptr_len +
+                        self.cur_row_on_page_idx * self.props.row_len +
+                        align_corr;
+                    if self.process_byte_array_with_data(off, self.props.row_len).is_err() {
+                        return Err(SasError::SasProperty("Could not process bytearray".to_string()));
+                    }
+                    if self.cur_row_on_page_idx == min(self.row_count, self.props.mix_page_row_cnt){
+                        match self.read_next_page(){
+                            Ok(true) => return Ok(true),
+                            Err(val) => return Err(val),
+                            Ok(false) => {
+                                self.cur_row_on_page_idx = 0;
+                            }
+                        }
+                    }
+                    return Ok(false);
+                } else if self.cur_page_type == PAGE_DATA_TYPE {
+                    if self.process_byte_array_with_data(
+                        bit_off + SUBHEADER_POINTERS_OFFSET + self.cur_row_on_page_idx * self.props.row_len,
+                        self.props.row_len).is_err(){
+                        return Err(SasError::SasProperty("Failed to process bytes".to_string()));
+                    }
+                    if self.cur_row_on_page_idx == self.cur_page_block_count {
+                        match self.read_next_page(){
+                            Ok(true) => return Ok(true),
+                            Err(val) => return Err(val),
+                            Ok(false) => {
+                                self.cur_row_on_page_idx = 0;
+                            }
+                        }
+                    }
+                    return Ok(false);
+                } else {
+                    return Err(SasError::SasProperty(format!("unknown page type : {}", self.cur_page_type)));
                 }
             }
-            0xE0 => {
-                let nbytes = end_of_first_byte + 2;
-                for _ in 0..nbytes{
-                    res.push(0x20);
+        }
+
+        fn chunk_to_series(&self){
+            let n = self.cur_row_in_chunk_idx;
+            for j in 0..self.props.col_cnt{
+                println!("{}", self.col_names[j]);
+                match self.col_types[j]{
+                    SAS_NUM_TYPE => {
+                        let mut vec = vec![0.0;n];
+                        let buf = &self.byte_chunk[j][0..8 * n];
+                        for k in 0..n{
+                            vec[k] = f64::from_le_bytes(buf[k * 8..(k + 1) * 8].try_into().unwrap());
+                        }
+                        //             for el in vec{
+                        //                 println!("{el}");
+                        //             }
+                    }
+                    SAS_STRING_TYPE => {
+                        if self.factor_strings{
+                            let mut s = Vec::with_capacity(n);
+                            s.extend_from_slice(&self.string_chunk[j]);
+                        } else {
+                            let mut s = vec!["".to_string(); n];
+                            for i in 0..n{
+                                match self.string_pool.get(&self.string_chunk[j][i]){
+                                    Some(x) => s[i] = x.to_string(),
+                                    None => s[i] = "".to_string(),
+                                }
+                            }
+                            //                 for st in s{
+                            //                     println!("{st}");
+                            //                 }
+                        }
+                    }
+                    _ => println!("non existing datatype"), //Err(SasError::SasProperty(format!("Non existing datatype for column {}", self.col_names[j]))), 
                 }
             }
-            0xF0 => {
-                let nbytes = end_of_first_byte + 2;
-                for _ in 0..nbytes{
-                    res.push(0x00);
+        }
+
+        fn allocate_buffers(&mut self, num_rows : usize) -> Result<(), SasError>{
+            //allocation of new buffers
+            self.string_pool = HashMap::new();
+            self.string_pool_r = HashMap::new();
+
+            self.byte_chunk = vec![Vec::new();self.props.col_cnt];
+            self.string_chunk = vec![Vec::new();self.props.col_cnt];
+
+            for j in 0..self.props.col_cnt{
+                match self.col_types[j]{
+                    SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
+                    SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
+                    _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
                 }
             }
-            _ => { return Err(SasError::Byte); }
+            Ok(())
+
+        }
+
+        fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
+            if self.cur_row_in_file_idx >= self.row_count{
+                return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
+            }
+
+            self.allocate_buffers(num_rows)?;
+
+            self.cur_row_in_chunk_idx = 0;
+            for _ in 0..num_rows{
+                match self.read_line(){
+                    Ok(true) => {
+                        break;
+                    }
+                    Err(val) => return Err(val),
+                    Ok(false) => (),
+                }
+            }
+            //self.chunk_to_series();
+            Ok(())
+        }
+
+        fn new(reader : std::io::BufReader<File>) ->Result<SAS7bdat, SasError> {
+            let mut sas = SAS7bdat{
+                col_formats : Vec::default(),
+                trim_strings : false,
+                convert_dates : false,
+                factor_strings : false,
+                no_align_correction : false,
+                date_created : 0.,
+                date_modified : 0.,
+                name : String::default(),
+                platform : String::default(),
+                sas_release : String::default(),
+                server_type : String::default(),
+                os_type : String::default(),
+                os_name : String::default(),
+                file_type : String::default(),
+                file_encoding : String::default(),
+                u64 : false,
+                byte_order : Endian::default(),
+                compression : String::default(),
+                text_decoder : Encodings::MultiByte(UTF8Encoding),
+                row_count : usize::default(),
+                col_types : Vec::default(),
+                col_labels : Vec::default(),
+                col_names : Vec::default(),
+                buf : Vec::default(),
+                buf_rdr : reader,
+                cached_page : Vec::default(),
+                cur_page_type : isize::default(),
+                cur_page_block_count : usize::default(),
+                cur_page_sub_hdr_count : usize::default(),
+                cur_row_in_file_idx : usize::default(),
+                cur_row_on_page_idx : usize::default(),
+                cur_page_data_sub_hdr_pointers : Vec::default(),
+                string_chunk : Vec::default(),
+                byte_chunk : Vec::default(),
+                cur_row_in_chunk_idx : usize::default(),
+                col_name_strings : Vec::default(),
+                col_data_off : Vec::default(),
+                col_data_lens : Vec::default(),
+                cols : Vec::default(),
+                props : SasProperties::default(),
+                encoding_map : get_encoding_map(),
+                hdr_sig_map : get_hdr_sig_map(),
+                string_pool : HashMap::default(),
+                string_pool_r :HashMap::default(),
+            };
+            sas.get_properties()?;
+            sas.cached_page = vec![0;sas.props.page_len];
+            sas.parse_metadata()?;
+            println!("col count = {}", sas.cur_row_in_file_idx);
+            Ok(sas)
         }
     }
-    if res.len() != res_len{
-        return Err(SasError::ByteLen);
+
+
+    fn get_encoding_map() -> HashMap<usize, &'static str>{
+        HashMap::from([
+                      (29, "latin1"),
+                      (20, "utf-8"),
+                      (33, "cyrillic"),
+                      (60, "wlatin2"),//windows1250
+                      (61, "wcyrillic"),
+                      (62, "wlatin1"),//windows1252
+                      (90, "ebcdic870")])
     }
-    Ok(res)
-}
 
-fn rdc_decompress(res_len : usize, inbuf : &[u8]) -> Result<Vec<u8>, SasError>{
-    let mut ctrl_bits : u16 = 0;
-    let mut ctrl_mask : u16 = 0;
-    let mut cmd : u8;
-    let mut ofs : u16;
-    let mut cnt : u16;
-    let mut inbuf_pos : usize = 0;
-    let mut res : Vec<u8> = Vec::with_capacity(res_len);
+    fn rle_decompress(res_len : usize, input : &[u8]) -> Result<Vec<u8>, SasError>{
+        let mut res : Vec<u8> = Vec::with_capacity(res_len);
+        let mut inbuf = input;
+        while !inbuf.is_empty() {
+            let control_byte = inbuf[0] & 0xF0;
+            let end_of_first_byte = usize::from(inbuf[0] & 0x0F);
+            inbuf = &inbuf[1..];
+            match control_byte {
+                0x00 => {
+                    if end_of_first_byte != 0 {
+                        return Err(SasError::Byte);
+                    }
+                    let nbytes = usize::from(inbuf[0]) + 64;
+                    inbuf = &inbuf[1..];  
+                    res.extend_from_slice(inbuf);
+                    inbuf = &inbuf[nbytes..];
+                }
+                0x40 => {
+                    let nbytes = end_of_first_byte * 16 + usize::from(inbuf[0]);
+                    inbuf = &inbuf[1..];
+                    for _ in 0..nbytes{
+                        res.push(inbuf[0]);
+                    }
+                    inbuf = &inbuf[1..];
+                }
+                0x60 => {
+                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
+                    inbuf = &inbuf[1..];
+                    for _ in 0..nbytes{
+                        res.push(0x20);
+                    }
+                }
+                0x70 => {
+                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
+                    inbuf = &inbuf[1..];
+                    for _ in 0..nbytes{
+                        res.push(0x00);
+                    }
+                }
+                0x80 => {
+                    let nbytes = end_of_first_byte + 1;
+                    res.extend_from_slice(&inbuf[0..nbytes]);
+                    inbuf = &inbuf[nbytes..];
+                }
+                0x90 => {
+                    let nbytes = end_of_first_byte + 17;
+                    res.extend_from_slice(&inbuf[0..nbytes]);
+                    inbuf = &inbuf[nbytes..];
+                }
+                0xA0 => {
+                    let nbytes = end_of_first_byte + 33;
+                    res.extend_from_slice(&inbuf[0..nbytes]);
+                    inbuf = &inbuf[nbytes..];
+                }
+                0xB0 => {
+                    let nbytes = end_of_first_byte + 49;
+                    res.extend_from_slice(&inbuf[0..nbytes]);
+                    inbuf = &inbuf[nbytes..];
 
-    while inbuf_pos < inbuf.len(){
-        ctrl_mask >>= 1;
-        if ctrl_mask == 0{
-            ctrl_bits = u16::from(inbuf[inbuf_pos]) << 8 + u16::from(inbuf[inbuf_pos+1]);
-            inbuf_pos += 2;
-            ctrl_mask = 0x8000;
+                }
+                0xC0 => {
+                    let nbytes = end_of_first_byte + 3;
+                    let x = inbuf[0];
+                    inbuf = &inbuf[1..];
+                    for _ in 0..nbytes{
+                        res.push(x);
+                    }
+                }
+                0xD0 => {
+                    let nbytes = end_of_first_byte + 2;
+                    for _ in 0..nbytes{
+                        res.push(0x40);
+                    }
+                }
+                0xE0 => {
+                    let nbytes = end_of_first_byte + 2;
+                    for _ in 0..nbytes{
+                        res.push(0x20);
+                    }
+                }
+                0xF0 => {
+                    let nbytes = end_of_first_byte + 2;
+                    for _ in 0..nbytes{
+                        res.push(0x00);
+                    }
+                }
+                _ => { return Err(SasError::Byte); }
+            }
         }
-        if (ctrl_bits & ctrl_mask) == 0 {
-            res.push(inbuf[inbuf_pos]);
+        if res.len() != res_len{
+            return Err(SasError::ByteLen);
+        }
+        Ok(res)
+    }
+
+    fn rdc_decompress(res_len : usize, inbuf : &[u8]) -> Result<Vec<u8>, SasError>{
+        let mut ctrl_bits : u16 = 0;
+        let mut ctrl_mask : u16 = 0;
+        let mut cmd : u8;
+        let mut ofs : u16;
+        let mut cnt : u16;
+        let mut inbuf_pos : usize = 0;
+        let mut res : Vec<u8> = Vec::with_capacity(res_len);
+
+        while inbuf_pos < inbuf.len(){
+            ctrl_mask >>= 1;
+            if ctrl_mask == 0{
+                ctrl_bits = u16::from(inbuf[inbuf_pos]) << 8 + u16::from(inbuf[inbuf_pos+1]);
+                inbuf_pos += 2;
+                ctrl_mask = 0x8000;
+            }
+            if (ctrl_bits & ctrl_mask) == 0 {
+                res.push(inbuf[inbuf_pos]);
+                inbuf_pos += 1;
+                continue;
+            }
+            cmd = (inbuf[inbuf_pos] >> 4) & 0x0F;
+            cnt = u16::from(inbuf[inbuf_pos] & 0x0F);
             inbuf_pos += 1;
-            continue;
-        }
-        cmd = (inbuf[inbuf_pos] >> 4) & 0x0F;
-        cnt = u16::from(inbuf[inbuf_pos] & 0x0F);
-        inbuf_pos += 1;
 
-        match cmd{
-            0 => {
-                cnt += 3;
-                for _ in 0..usize::from(cnt){
-                    res.push(inbuf[inbuf_pos]);
+            match cmd{
+                0 => {
+                    cnt += 3;
+                    for _ in 0..usize::from(cnt){
+                        res.push(inbuf[inbuf_pos]);
+                    }
+                    inbuf_pos += 1;
                 }
-                inbuf_pos += 1;
-            }
-            1 => {
-                cnt += u16::from(inbuf[inbuf_pos]) << 4;
-                cnt += 19;
-                inbuf_pos += 1;
-                for _ in 0..usize::from(cnt){
-                    res.push(inbuf[inbuf_pos]);
+                1 => {
+                    cnt += u16::from(inbuf[inbuf_pos]) << 4;
+                    cnt += 19;
+                    inbuf_pos += 1;
+                    for _ in 0..usize::from(cnt){
+                        res.push(inbuf[inbuf_pos]);
+                    }
+                    inbuf_pos += 1;
                 }
-                inbuf_pos += 1;
-            }
-            2 => {
-                ofs = cnt + 3;
-                ofs += u16::from(inbuf[inbuf_pos]) << 4;
-                inbuf_pos += 1;
-                cnt = u16::from(inbuf[inbuf_pos]);
-                inbuf_pos += 1;
-                cnt += 16;
-                res.extend_from_within((res.len() -usize::from(ofs))..(res.len()-usize::from(ofs)+usize::from(cnt)));
-            }
-            3..=16 => {
-                ofs = cnt + 3;
-                ofs += u16::from(inbuf[inbuf_pos]) << 4;
-                inbuf_pos += 1;
-                res.extend_from_within((res.len() - usize::from(ofs))..
-                                       (res.len() - usize::from(ofs) + usize::from(cmd)));
-            }
-            _ => {
-                return Err(SasError::Cmd);
-            }
+                2 => {
+                    ofs = cnt + 3;
+                    ofs += u16::from(inbuf[inbuf_pos]) << 4;
+                    inbuf_pos += 1;
+                    cnt = u16::from(inbuf[inbuf_pos]);
+                    inbuf_pos += 1;
+                    cnt += 16;
+                    res.extend_from_within((res.len() -usize::from(ofs))..(res.len()-usize::from(ofs)+usize::from(cnt)));
+                }
+                3..=16 => {
+                    ofs = cnt + 3;
+                    ofs += u16::from(inbuf[inbuf_pos]) << 4;
+                    inbuf_pos += 1;
+                    res.extend_from_within((res.len() - usize::from(ofs))..
+                                           (res.len() - usize::from(ofs) + usize::from(cmd)));
+                }
+                _ => {
+                    return Err(SasError::Cmd);
+                }
 
+            }
         }
+        if res.len() != res_len {
+            return Err(SasError::ByteLen);
+        }
+        Ok(res)
     }
-    if res.len() != res_len {
-        return Err(SasError::ByteLen);
-    }
-    Ok(res)
-}
-
-
-//#[cfg(test)]
-//mod tests{
-//    use super::*;
-//
-//    #[test]
-//    fn test_bytes(){
-//    }
-//}
