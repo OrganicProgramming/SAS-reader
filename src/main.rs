@@ -392,7 +392,6 @@ impl SAS7bdat {
     }
 
     fn get_properties(&mut self) -> Result<(), SasError>{
-        //TODO factor out all from UTF8
         self.props = SasProperties::default();
         self.read_bytes(0,288)?;
         self.cached_page = vec![0;288];        
@@ -446,18 +445,9 @@ impl SAS7bdat {
         }
         self.read_bytes(DATASET_OFFSET, DATASET_LENGTH)?;
         self.name = self.utf_8(&self.buf[0..DATASET_LENGTH])?;
-        //match std::str::from_utf8(&self.buf[0..DATASET_LENGTH]){
-        //    Ok(v) => self.name = v.to_string(),
-        //    Err(e) => {
-        //        panic!("Invalid utf-8 sequence in datasetname: {}", e);
-        //    }
-        //}
+        
         self.read_bytes(FILE_TYPE_OFFSET, FILE_TYPE_LENGTH)?;
         self.file_type = self.utf_8(&self.buf[0..FILE_TYPE_LENGTH])?;
-        //match std::str::from_utf8(&self.buf[0..FILE_TYPE_LENGTH]){
-        //    Ok(tp) => self.file_type = tp.to_string(),
-        //    Err(e) => return Err(SasError::SasProperty(format!("Could not parse filetype from utf8: {}", e))),
-        //}
         self.date_created = self.read_float(DATE_CREATED_OFFSET, DATE_CREATED_LENGTH);
         self.date_modified = self.read_float(DATE_MODIFIED_OFFSET, DATE_MODIFIED_LENGTH);
         self.props.hdr_len = self.read_int(HEADER_SIZE_OFFSET + align1, HEADER_SIZE_LENGTH)?;
@@ -479,37 +469,20 @@ impl SAS7bdat {
         self.props.page_len = self.read_int(PAGE_SIZE_OFFSET + align1, PAGE_SIZE_LENGTH)?;
         self.read_bytes(SAS_RELEASE_OFFSET + total_align, SAS_RELEASE_LENGTH)?;
         self.sas_release = self.utf_8(&self.buf[0..SAS_RELEASE_LENGTH])?;
-        //match std::str::from_utf8(&self.buf[0..SAS_RELEASE_LENGTH]){
-        //    Ok(rel) => self.sas_release = rel.to_string(),
-        //    Err(_) => return Err(SasError::SasProperty("Unable to read SAS Release".to_string())),
-        //}
+        
         self.read_bytes(SAS_SERVER_TYPE_OFFSET + total_align, SAS_SERVER_TYPE_LENGTH)?;
         self.server_type = self.utf_8(&self.buf[0..SAS_SERVER_TYPE_LENGTH])?;
-        //match std::str::from_utf8(&self.buf[0..SAS_SERVER_TYPE_LENGTH]){
-        //    Ok(srv) => self.server_type = srv.to_string(),
-        //    Err(_) => return Err(SasError::SasProperty("Unable to read server type".to_string())),
-        //}
+
         self.read_bytes(OS_VERSION_NUMBER_OFFSET + total_align, OS_VERSION_NUMBER_LENGTH)?;
         self.os_type = self.utf_8(&self.buf[0..OS_VERSION_NUMBER_LENGTH])?;
-        //match std::str::from_utf8(&self.buf[0..OS_VERSION_NUMBER_LENGTH]) {
-        //    Ok(vr) => self.os_type = vr.to_string(),
-        //    Err(_) => return Err(SasError::SasProperty("Unable to read OS TYPE".to_string())),
-        //}
+
         self.read_bytes(OS_NAME_OFFSET + total_align, OS_NAME_LENGTH)?;
         if self.buf[0] != 0{
             self.os_name = self.utf_8(&self.buf[0..OS_NAME_LENGTH])?;
-            //match std::str::from_utf8(&self.buf[0..OS_NAME_LENGTH]){
-            //    Ok(nm) => self.os_name = nm.to_string(),
-            //    Err(_) => return Err(SasError::SasProperty("Could not read OS name".to_string())),
-            //}
         }
         else {
             self.read_bytes(OS_MAKER_OFFSET + total_align, OS_MAKER_LENGTH)?;
             self.os_name = self.utf_8(&self.buf[0..OS_MAKER_LENGTH])?;
-            //match std::str::from_utf8(&self.buf[0..OS_MAKER_LENGTH]){
-            //    Ok(mk) => self.os_name = mk.to_string(),
-            //    Err(_) => return Err(SasError::SasProperty("Could not read OS maker for OS name".to_string())),
-            //}
         }
         Ok(())
     }
@@ -607,10 +580,12 @@ impl SAS7bdat {
                 off1 += 4;
             }
             self.read_bytes(off1, self.props.lcp)?;
-            match std::str::from_utf8(&self.buf[0..8]){
-                Ok(vr) => compression_literal = vr.trim_end_matches('\x00').to_string(),
-                Err(_) => return Err(SasError::SasProperty("Could not read compression literal".to_string())),
-            }
+            compression_literal = self.utf_8(&self.buf[0..8])?;
+            //match std::str::from_utf8(&self.buf[0..8]){
+            //    Ok(vr) => compression_literal = vr.trim_end_matches('\x00').to_string(),
+            //    Err(_) => return Err(SasError::SasProperty("Could not read compression literal".to_string())),
+            //}
+
             let x = compression_literal.as_str();
             if x.is_empty(){
                 self.props.lcs = 0;
@@ -619,20 +594,26 @@ impl SAS7bdat {
                     off1 += 4;
                 }
                 self.read_bytes(off1, self.props.lcp)?;
-                match std::str::from_utf8(&self.buf[0..self.props.lcp]){
-                    Ok(x) => self.props.creator_proc = x.to_string(),
-                    Err(_) => return Err(SasError::SasProperty("Could not read create proc!".to_string())),
-                }
+                self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcp])?;
+
+                //match std::str::from_utf8(&self.buf[0..self.props.lcp]){
+                //    Ok(x) => self.props.creator_proc = x.to_string(),
+                //    Err(_) => return Err(SasError::SasProperty("Could not read create proc!".to_string())),
+                //}
+
             } else if x == "SASYZCRL"{
                 off1 = off + 40;
                 if self.u64{
                     off1 += 4;
                 }
                 self.read_bytes(off1, self.props.lcp)?;
-                match std::str::from_utf8(&self.buf[0..self.props.lcp]){
-                    Ok(x) => self.props.creator_proc = x.to_string(),
-                    Err(_) => return Err(SasError::SasProperty("Could not create RLE create proc".to_string())),
-                } 
+                self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcp])?;
+
+                //match std::str::from_utf8(&self.buf[0..self.props.lcp]){
+                //    Ok(x) => self.props.creator_proc = x.to_string(),
+                //    Err(_) => return Err(SasError::SasProperty("Could not create RLE create proc".to_string())),
+                //} 
+
             } else if self.props.lcs > 0 {
                 self.props.lcp = 0;
                 off1 = off + 16;
@@ -640,10 +621,13 @@ impl SAS7bdat {
                     off1 += 4;
                 }
                 self.read_bytes(off1, self.props.lcs)?;
-                match std::str::from_utf8(&self.buf[0..self.props.lcp]) {
-                    Ok(x) => self.props.creator_proc = x.to_string(),
-                    Err(_) => return Err(SasError::SasProperty("Could not read lcp create proc".to_string())),
-                }
+                self.props.creator_proc = self.utf_8(&self.buf[0..self.props.lcs])?;
+
+                //match std::str::from_utf8(&self.buf[0..self.props.lcs]) {
+                //    Ok(x) => self.props.creator_proc = x.to_string(),
+                //    Err(_) => return Err(SasError::SasProperty("Could not read lcp create proc".to_string())),
+                //}
+                
             }
         };
         Ok(())
