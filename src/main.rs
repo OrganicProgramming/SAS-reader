@@ -7,7 +7,7 @@ use encoding::codec::singlebyte::SingleByteEncoding;
 use encoding::codec::utf_8::UTF8Encoding;
 
 fn main() -> std::io::Result<()> {
-    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
+    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tume.sas7bdat")?);
     let sas = SAS7bdat::new_sas_reader(sas_reader);
     match sas {
         Ok(mut s) => {
@@ -101,13 +101,6 @@ struct SAS7bdat{
     string_pool_r : HashMap<String, u64>,
     row_hash_map : HashMap<usize, SasVal>,
 }
-
-//impl Iterator for SAS7bdat{
-//    type Item = HashMap<usize, SasVal>;
-//    fn next(&mut self) -> Option<Self::Item>{
-//        
-//    }
-//}
 
 #[derive(Default)]
 struct SasProperties{
@@ -383,13 +376,7 @@ impl Encodings{
 
 impl SAS7bdat {
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
-        match self.text_decoder.decode(bytes){
-            Ok(x) => {
-                println!("Windows : {x}");
-                Ok(x)
-            }
-            Err(_) => Err(SasError::SasProperty("Failed encoding to UTF-8 string".to_string())),
-        }
+        self.text_decoder.decode(bytes)
     }
 
     //fn string_factor_map(&self) -> &HashMap<u64, String>{
@@ -405,6 +392,7 @@ impl SAS7bdat {
     }
 
     fn get_properties(&mut self) -> Result<(), SasError>{
+        //TODO factor out all from UTF8
         self.props = SasProperties::default();
         self.read_bytes(0,288)?;
         self.cached_page = vec![0;288];        
@@ -457,17 +445,19 @@ impl SAS7bdat {
             
         }
         self.read_bytes(DATASET_OFFSET, DATASET_LENGTH)?;
-        match std::str::from_utf8(&self.buf[0..DATASET_LENGTH]){
-            Ok(v) => self.name = v.to_string(),
-            Err(e) => {
-                panic!("Invalid utf-8 sequence in datasetname: {}", e);
-            }
-        }
+        self.name = self.utf_8(&self.buf[0..DATASET_LENGTH])?;
+        //match std::str::from_utf8(&self.buf[0..DATASET_LENGTH]){
+        //    Ok(v) => self.name = v.to_string(),
+        //    Err(e) => {
+        //        panic!("Invalid utf-8 sequence in datasetname: {}", e);
+        //    }
+        //}
         self.read_bytes(FILE_TYPE_OFFSET, FILE_TYPE_LENGTH)?;
-        match std::str::from_utf8(&self.buf[0..FILE_TYPE_LENGTH]){
-            Ok(tp) => self.file_type = tp.to_string(),
-            Err(e) => return Err(SasError::SasProperty(format!("Could not parse filetype from utf8: {}", e))),
-        }
+        self.file_type = self.utf_8(&self.buf[0..FILE_TYPE_LENGTH])?;
+        //match std::str::from_utf8(&self.buf[0..FILE_TYPE_LENGTH]){
+        //    Ok(tp) => self.file_type = tp.to_string(),
+        //    Err(e) => return Err(SasError::SasProperty(format!("Could not parse filetype from utf8: {}", e))),
+        //}
         self.date_created = self.read_float(DATE_CREATED_OFFSET, DATE_CREATED_LENGTH);
         self.date_modified = self.read_float(DATE_MODIFIED_OFFSET, DATE_MODIFIED_LENGTH);
         self.props.hdr_len = self.read_int(HEADER_SIZE_OFFSET + align1, HEADER_SIZE_LENGTH)?;
@@ -488,33 +478,38 @@ impl SAS7bdat {
         self.props.page_count = self.read_int(PAGE_COUNT_OFFSET + align1, PAGE_COUNT_LENGTH)?;
         self.props.page_len = self.read_int(PAGE_SIZE_OFFSET + align1, PAGE_SIZE_LENGTH)?;
         self.read_bytes(SAS_RELEASE_OFFSET + total_align, SAS_RELEASE_LENGTH)?;
-        match std::str::from_utf8(&self.buf[0..SAS_RELEASE_LENGTH]){
-            Ok(rel) => self.sas_release = rel.to_string(),
-            Err(_) => return Err(SasError::SasProperty("Unable to read SAS Release".to_string())),
-        }
+        self.sas_release = self.utf_8(&self.buf[0..SAS_RELEASE_LENGTH])?;
+        //match std::str::from_utf8(&self.buf[0..SAS_RELEASE_LENGTH]){
+        //    Ok(rel) => self.sas_release = rel.to_string(),
+        //    Err(_) => return Err(SasError::SasProperty("Unable to read SAS Release".to_string())),
+        //}
         self.read_bytes(SAS_SERVER_TYPE_OFFSET + total_align, SAS_SERVER_TYPE_LENGTH)?;
-        match std::str::from_utf8(&self.buf[0..SAS_SERVER_TYPE_LENGTH]){
-            Ok(srv) => self.server_type = srv.to_string(),
-            Err(_) => return Err(SasError::SasProperty("Unable to read server type".to_string())),
-        }
+        self.server_type = self.utf_8(&self.buf[0..SAS_SERVER_TYPE_LENGTH])?;
+        //match std::str::from_utf8(&self.buf[0..SAS_SERVER_TYPE_LENGTH]){
+        //    Ok(srv) => self.server_type = srv.to_string(),
+        //    Err(_) => return Err(SasError::SasProperty("Unable to read server type".to_string())),
+        //}
         self.read_bytes(OS_VERSION_NUMBER_OFFSET + total_align, OS_VERSION_NUMBER_LENGTH)?;
-        match std::str::from_utf8(&self.buf[0..OS_VERSION_NUMBER_LENGTH]) {
-            Ok(vr) => self.os_type = vr.to_string(),
-            Err(_) => return Err(SasError::SasProperty("Unable to read OS TYPE".to_string())),
-        }
+        self.os_type = self.utf_8(&self.buf[0..OS_VERSION_NUMBER_LENGTH])?;
+        //match std::str::from_utf8(&self.buf[0..OS_VERSION_NUMBER_LENGTH]) {
+        //    Ok(vr) => self.os_type = vr.to_string(),
+        //    Err(_) => return Err(SasError::SasProperty("Unable to read OS TYPE".to_string())),
+        //}
         self.read_bytes(OS_NAME_OFFSET + total_align, OS_NAME_LENGTH)?;
         if self.buf[0] != 0{
-            match std::str::from_utf8(&self.buf[0..OS_NAME_LENGTH]){
-                Ok(nm) => self.os_name = nm.to_string(),
-                Err(_) => return Err(SasError::SasProperty("Could not read OS name".to_string())),
-            }
+            self.os_name = self.utf_8(&self.buf[0..OS_NAME_LENGTH])?;
+            //match std::str::from_utf8(&self.buf[0..OS_NAME_LENGTH]){
+            //    Ok(nm) => self.os_name = nm.to_string(),
+            //    Err(_) => return Err(SasError::SasProperty("Could not read OS name".to_string())),
+            //}
         }
         else {
             self.read_bytes(OS_MAKER_OFFSET + total_align, OS_MAKER_LENGTH)?;
-            match std::str::from_utf8(&self.buf[0..OS_MAKER_LENGTH]){
-                Ok(mk) => self.os_name = mk.to_string(),
-                Err(_) => return Err(SasError::SasProperty("Could not read OS maker for OS name".to_string())),
-            }
+            self.os_name = self.utf_8(&self.buf[0..OS_MAKER_LENGTH])?;
+            //match std::str::from_utf8(&self.buf[0..OS_MAKER_LENGTH]){
+            //    Ok(mk) => self.os_name = mk.to_string(),
+            //    Err(_) => return Err(SasError::SasProperty("Could not read OS maker for OS name".to_string())),
+            //}
         }
         Ok(())
     }
@@ -586,6 +581,7 @@ impl SAS7bdat {
         }
         Ok(())
     }
+
     fn process_col_txt_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
         off += self.props.int_len;
         let txt_block_sz = len - self.props.int_len;
@@ -946,8 +942,7 @@ impl SAS7bdat {
                 if self.trim_strings{
                     st = st.trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
                 } 
-                //TODO set encoding
-                //
+
                 match self.string_pool_r.get(&st) {
                     Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
                     None => {
@@ -1042,6 +1037,7 @@ impl SAS7bdat {
         self.cached_page.len();
         self.cur_page_block_count = self.read_int(BLOCK_COUNT_OFFSET + bit_off, BLOCK_COUNT_LENGTH)?;
         self.cur_page_sub_hdr_count = self.read_int(SUBHEADER_COUNT_OFFSET + bit_off, SUBHEADER_COUNT_LENGTH)?;
+        //TODO factor out read_signed_int
         self.cur_page_type = self.read_signed_int(PAGE_TYPE_OFFSET + bit_off, PAGE_TYPE_LENGTH)?;
         Ok(())
     }
@@ -1050,12 +1046,13 @@ impl SAS7bdat {
         self.cur_page_data_sub_hdr_pointers = Vec::with_capacity(10);
         self.cached_page = vec![0;self.props.page_len];
         let n = self.buf_rdr.read_exact(&mut self.cached_page);
-        //TODO filter correct error!!
         match n {
             Ok(()) => (),
-            Err(er) => {
+            //number of red bytes smaller than cached_page length
+            Err(er) if er.kind() == std::io::ErrorKind::UnexpectedEof => {
                 return Ok(true);
             }
+            Err(_) => return Err(SasError::Read),
         }
 
         self.read_page_hdr()?;
@@ -1076,6 +1073,7 @@ impl SAS7bdat {
             self.buf_rdr.seek(SeekFrom::Start(self.props.hdr_len.try_into().unwrap())).expect("Could not read page!");
             self.read_next_page()?;
         }
+
         loop {
             if self.cur_page_type == PAGE_META_TYPE {
                 if self.cur_row_on_page_idx >= self.cur_page_data_sub_hdr_pointers.len() {
@@ -1176,7 +1174,7 @@ impl SAS7bdat {
     }
 
     fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
-        if self.cur_row_in_file_idx >= dbg!(self.row_count){
+        if self.cur_row_in_file_idx >= self.row_count{
             return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
         }
 
