@@ -5,38 +5,18 @@ use encoding::{Encoding, DecoderTrap};
 use encoding::all::*;
 use encoding::codec::singlebyte::SingleByteEncoding;
 use encoding::codec::utf_8::UTF8Encoding;
+use std::env;
 
 fn main() -> std::io::Result<()> {
-    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tume.sas7bdat")?);
+    let args : Vec<String> = env::args().collect();
+    let name = &args[1];
+    let sas_reader = BufReader::new(File::open(name)?);
+    //let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
     let sas = SAS7bdat::new(sas_reader);
     match sas {
-        Ok(mut s) => {
-            for el in s{
-                println!("snoepie");
-            }
-            println!("reading ...");
-            //match s.read(1000001){
-            //    Ok(_) => println!("reading OK!!"),
-            //    Err(val) => match val {
-            //    SasError::Byte => println!("byteerror"),
-            //    SasError::Read => println!("readerror"),
-            //    SasError::SasProperty(st) => println!("{st}"),
-            //    SasError::TypeConversion => println!("conversion error"),
-            //    SasError::ByteLen => println!("Bytelen Error"),
-            //    SasError::Cmd => println!("Cmd error"),
-            //},
-            //}
+        Ok(s) => {
         }
-        Err(val) => {
-            match val {
-                SasError::Byte => println!("byteerror"),
-                SasError::Read => println!("readerror"),
-                SasError::SasProperty(st) => println!("{st}"),
-                SasError::TypeConversion => println!("conversion error"),
-                SasError::ByteLen => println!("Bytelen Error"),
-                SasError::Cmd => println!("Cmd error"),
-            }
-        }
+        Err(e) => (),
     };
 
     Ok(())
@@ -48,16 +28,41 @@ enum Endian{
     Big,
 }
 
+#[derive(Clone, Debug)]
 enum SasVal{
     Numeric(f64),
     Text(String),
 }
+
+impl TryFrom<SasVal> for f64{
+    type Error = SasError;
+
+    fn try_from(value: SasVal) -> Result<Self, Self::Error> {
+       match value {
+           SasVal::Numeric(x) => Ok(x),
+           _ => Err(SasError::TypeConversion),
+       }
+    }
+}
+impl TryFrom<SasVal> for String{
+    type Error = SasError;
+
+    fn try_from(value: SasVal) -> Result<Self, Self::Error> {
+       match value {
+           SasVal::Text(x) => Ok(x),
+           _ => Err(SasError::TypeConversion),
+       }
+    }
+}
+
 
 type Decompressor = fn(usize, &[u8]) -> Result<Vec<u8>, SasError>;
 type Decoder = fn(&[u8]) -> Result<String, SasError>;
 
 //#[derive(Default)]
 struct SAS7bdat{
+    iter_idx : usize,
+    row_vals : Vec<SasVal>,
     col_formats : Vec<String>,
     trim_strings : bool,
     convert_dates : bool,
@@ -320,7 +325,7 @@ impl ByteNum for f64{
         }
     }
 }
-
+#[derive(Debug)]
 enum SasError{
     TypeConversion,
     Byte,
@@ -374,23 +379,22 @@ impl Encodings{
 }
 
 impl Iterator for SAS7bdat{
-    type Item = Result<String, SasError>;
+    type Item = Vec<SasVal>;
 
     fn next(&mut self) -> Option<Self::Item>{
-        if self.cur_row_in_file_idx == 0 || self.cur_row_in_chunk_idx >= 1000{
-            match self.read(1000){
-                Ok(()) => Some(Ok("pony".to_string())),
-                Err(e) => Some(Err(e)),
-            };
-            self.cur_row_in_file_idx += 1;
-            Some(Ok("pony".to_string()))
-        } else {
-            None
+        match self.read_line(){
+            Ok(false) => {
+                Some(self.row_vals.clone())
+            }
+            Ok(true) => {
+                None
+            }
+            Err(_) => panic!("Could not read all lines!"),
         }
     }
 }
 
-impl SAS7bdat {
+impl SAS7bdat{
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
         self.text_decoder.decode(bytes)
     }
@@ -560,6 +564,7 @@ impl SAS7bdat {
         self.props.lcp = self.read_int(lcp_off, 2)?;
         Ok(())
     }
+    
     fn process_col_size_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
         let int_len = self.props.int_len;
         off += int_len;
@@ -913,30 +918,40 @@ impl SAS7bdat {
                 let tmp = &src[start..end];
                 //Handle numeric types: TODO add proper date conversion
                 if self.cols[j].ctype == SAS_NUM_TYPE {
-                    let s = 8 * self.cur_row_in_chunk_idx;
+                    //let s = 8 * self.cur_row_in_chunk_idx;
+                    let mut buf = vec![0;8];
+                    let num;
                     match self.byte_order {
                         Endian::Little => {
                             let m = 8 - len;
-                            self.byte_chunk[j][s + m .. s + 8].copy_from_slice(tmp);
+                            buf[m .. 8].copy_from_slice(tmp);
+                            num = f64::from_le_bytes(buf.try_into().unwrap());
                         }
-                        Endian::Big => self.byte_chunk[j][s .. s + len].copy_from_slice(tmp),
+                        Endian::Big => {
+                            buf[0 .. len].copy_from_slice(tmp);
+                            num = f64::from_be_bytes(buf.try_into().unwrap());
+                        }
                     }
+                    self.row_vals[j] = SasVal::Numeric(num);
+                    //println!("{num}");
                     //Handle String types
                 } else {
                     let mut st = self.utf_8(tmp)?;
                     if self.trim_strings{
                         st = st.trim_end_matches(&['\u{0000}', '\u{0020}']).to_string();
-                    } 
-
-                    match self.string_pool_r.get(&st) {
-                        Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
-                        None => {
-                            let num = self.string_pool.len();
-                            self.string_pool.insert(num.try_into().unwrap(), st.clone());
-                            self.string_pool_r.insert(st, num.try_into().unwrap());
-                            self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
-                        }
                     }
+                    self.row_vals[j] = SasVal::Text(st);
+                    //println!("{st}");
+
+                    //match self.string_pool_r.get(&st) {
+                    //    Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
+                    //    None => {
+                    //        let num = self.string_pool.len();
+                    //        self.string_pool.insert(num.try_into().unwrap(), st.clone());
+                    //        self.string_pool_r.insert(st, num.try_into().unwrap());
+                    //        self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
+                    //    }
+                    //}
                 }
             }
 
@@ -1087,31 +1102,29 @@ impl SAS7bdat {
             }
         }
 
-        fn allocate_buffers(&mut self, num_rows : usize) -> Result<(), SasError>{
-            //allocation of new buffers
-            self.string_pool = HashMap::new();
-            self.string_pool_r = HashMap::new();
+        //fn allocate_buffers(&mut self, num_rows : usize) -> Result<(), SasError>{
+        //    //allocation of new buffers
+        //    self.string_pool = HashMap::new();
+        //    self.string_pool_r = HashMap::new();
 
-            self.byte_chunk = vec![Vec::new();self.props.col_cnt];
-            self.string_chunk = vec![Vec::new();self.props.col_cnt];
+        //    self.byte_chunk = vec![Vec::new();self.props.col_cnt];
+        //    self.string_chunk = vec![Vec::new();self.props.col_cnt];
 
-            for j in 0..self.props.col_cnt{
-                match self.col_types[j]{
-                    SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
-                    SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
-                    _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
-                }
-            }
-            Ok(())
+        //    for j in 0..self.props.col_cnt{
+        //        match self.col_types[j]{
+        //            SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
+        //            SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
+        //            _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
+        //        }
+        //    }
+        //    Ok(())
 
-        }
+        //}
 
         fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
             if self.cur_row_in_file_idx >= self.row_count{
                 return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
             }
-
-            self.allocate_buffers(num_rows)?;
 
             self.cur_row_in_chunk_idx = 0;
             for _ in 0..num_rows{
@@ -1129,6 +1142,8 @@ impl SAS7bdat {
 
         fn new(reader : std::io::BufReader<File>) ->Result<SAS7bdat, SasError> {
             let mut sas = SAS7bdat{
+                iter_idx : 0,
+                row_vals : Vec::new(),
                 col_formats : Vec::default(),
                 trim_strings : false,
                 convert_dates : false,
@@ -1177,7 +1192,8 @@ impl SAS7bdat {
             sas.get_properties()?;
             sas.cached_page = vec![0;sas.props.page_len];
             sas.parse_metadata()?;
-            println!("col count = {}", sas.cur_row_in_file_idx);
+            sas.row_vals = vec![SasVal::Numeric(0.0);sas.props.col_cnt];
+            //println!("col count = {}", sas.cur_row_in_file_idx);
             Ok(sas)
         }
     }
