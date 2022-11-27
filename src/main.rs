@@ -5,26 +5,90 @@ use encoding::{Encoding, DecoderTrap};
 use encoding::all::*;
 use encoding::codec::singlebyte::SingleByteEncoding;
 use encoding::codec::utf_8::UTF8Encoding;
-use std::env;
+use chrono::prelude::*;
+use chrono::{Duration, Utc, NaiveDate};
+//use std::env;
 
-fn main() -> std::io::Result<()> {
-    let args : Vec<String> = env::args().collect();
-    let name = &args[1];
-    let sas_reader = BufReader::new(File::open(name)?);
-    //let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
-    let sas = SAS7bdat::new(sas_reader);
-    match sas {
-        Ok(s) => {
+//fn create_table_string(sas : &SAS7bdat, name : &str) -> String{
+//    let mut create_table = format!("create table if not exists {name} (");
+//    let len = sas.col_names.len();
+//    for idx in 0..len{
+//        let ap = if idx < len - 1 {
+//            ","
+//        } else {
+//            ");"
+//        };
+//        match (&sas.col_names[idx], &sas.col_types[idx]){
+//            (nm, 0) => create_table += format!("{} {}{}", nm, "INTEGER", ap).as_str(),
+//            (nm, 1) => create_table += format!("{} {}{}", nm, "TEXT", ap).as_str(),
+//            _ => create_table += "",
+//        }
+//    }
+//    create_table
+//}
+//
+//fn sqlite_insert(sas : &SAS7bdat, statement : &mut sqlite::Statement) {
+//    let len = sas.row_vals.len();
+//    for idx in 0..len{
+//        match &sas.row_vals[idx]{
+//            SasVal::Numeric(x) => statement.bind(idx + 1, *x).unwrap(),
+//            SasVal::Text(x) => statement.bind(idx + 1, x.as_str()).unwrap(), 
+//        }
+//    }
+//    statement.next().unwrap();
+//    statement.reset().unwrap();
+//}
+//
+//fn make_statement_string(sas : &SAS7bdat, name : &str) -> String{
+//    let question_marks = vec!["?"; sas.col_names.len()];
+//    format!("insert into {name} values ({});", question_marks.join(","))
+//}
+
+//fn main() -> Result<(), SasError> {
+//    let args : Vec<String> = env::args().collect();
+//    let name = &args[1];
+//    let sas_reader = BufReader::new(File::open(name).unwrap());
+//    //let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
+//    let mut sas = SAS7bdat::new(sas_reader)?;
+//    //let conn = sqlite::open("super.db").unwrap();
+//    //conn.execute("begin transaction;").unwrap();
+//    //dbg!(conn.execute(create_table_string(&sas, "jos")).unwrap());
+//    //let mut statement = conn.prepare(make_statement_string(&sas, "jos")).unwrap();
+//    while !sas.read_line()?{
+//        //sqlite_insert(&sas, &mut statement);
+//        //for (idx, el) in sas.col_names.iter().enumerate(){
+//        //    //dbg!(create_insert_string(&sas.row_vals, "jos"));
+//        //    //match &sas.row_vals[idx]{
+//        //    //    SasVal::Numeric(x) => x.to_string(),//println!("{el} = {}", x),
+//        //    //    SasVal::Text(x) => x.to_string(),//println!("{el} = {}", &x),
+//        //    //};
+//        //}
+//    }
+//    //conn.execute("commit;").unwrap();
+//    Ok(())
+//}
+
+fn main() -> Result<(), SasError> {
+    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tume(1).sas7bdat").unwrap());
+    let mut sas = SAS7bdat::new(sas_reader)?;
+    while sas.read_line()?{
+        for (idx, val) in sas.row_vals.iter().enumerate(){
+            //println!("{} :", &sas.col_names[idx]);
+            match val{
+                SasVal::Numeric(x) =>(), //println!("{}", x),
+                SasVal::Text(x) =>(), //println!("{}", x),
+                SasVal::Date(x) =>(), //println!("{}", x),
+                SasVal::DateTime(x) =>(), //println!("{}", x),
+            }
         }
-        Err(e) => (),
-    };
-
+    }
     Ok(())
 }
 
 #[derive(Default, Debug)]
 enum Endian{
-    #[default] Little,
+    #[default] 
+    Little,
     Big,
 }
 
@@ -32,41 +96,18 @@ enum Endian{
 enum SasVal{
     Numeric(f64),
     Text(String),
+    Date(NaiveDate),
+    DateTime(DateTime<Utc>),
 }
-
-impl TryFrom<SasVal> for f64{
-    type Error = SasError;
-
-    fn try_from(value: SasVal) -> Result<Self, Self::Error> {
-       match value {
-           SasVal::Numeric(x) => Ok(x),
-           _ => Err(SasError::TypeConversion),
-       }
-    }
-}
-impl TryFrom<SasVal> for String{
-    type Error = SasError;
-
-    fn try_from(value: SasVal) -> Result<Self, Self::Error> {
-       match value {
-           SasVal::Text(x) => Ok(x),
-           _ => Err(SasError::TypeConversion),
-       }
-    }
-}
-
 
 type Decompressor = fn(usize, &[u8]) -> Result<Vec<u8>, SasError>;
-type Decoder = fn(&[u8]) -> Result<String, SasError>;
 
 //#[derive(Default)]
 struct SAS7bdat{
-    iter_idx : usize,
+    date_base : DateTime<Utc>,
     row_vals : Vec<SasVal>,
     col_formats : Vec<String>,
     trim_strings : bool,
-    convert_dates : bool,
-    factor_strings : bool,
     no_align_correction : bool,
     date_created : f64,
     date_modified : f64,
@@ -87,6 +128,7 @@ struct SAS7bdat{
     col_labels : Vec<String>,
     col_names : Vec<String>,
     buf : Vec<u8>,
+    float_buf : [u8;8],
     buf_rdr : BufReader<File>,
     cached_page : Vec<u8>,
     cur_page_type : isize,
@@ -95,8 +137,6 @@ struct SAS7bdat{
     cur_row_in_file_idx : usize,
     cur_row_on_page_idx : usize,
     cur_page_data_sub_hdr_pointers : Vec<SubHdrPtr>,
-    string_chunk : Vec<Vec<u64>>,
-    byte_chunk : Vec<Vec<u8>>,
     cur_row_in_chunk_idx : usize,
     col_name_strings : Vec<Vec<u8>>,
     col_data_off : Vec<usize>,
@@ -105,8 +145,6 @@ struct SAS7bdat{
     props : SasProperties,
     encoding_map : HashMap<usize, &'static str>,
     hdr_sig_map : HashMap<Vec<u8>, usize>, 
-    string_pool : HashMap<u64, String>,
-    string_pool_r : HashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -154,10 +192,8 @@ const COL_ATTR_IDX : usize = 5;
 const FMT_AND_LABEL_IDX : usize = 6;
 const COL_LIST_IDX : usize = 7;
 const DATA_SUBHDR_IDX : usize = 8;
-
 const SAS_NUM_TYPE : u16 = 0;
 const SAS_STRING_TYPE : u16 = 1;
-
 fn get_hdr_sig_map() -> HashMap<Vec<u8>, usize> {
     HashMap::from([(b"\x00\x00\x00\x00\xF7\xF7\xF7\xF7".to_vec(), ROW_SIZE_IDX),
     (b"\xF7\xF7\xF7\xF7".to_vec(),                 ROW_SIZE_IDX),
@@ -325,11 +361,13 @@ impl ByteNum for f64{
         }
     }
 }
+
 #[derive(Debug)]
 enum SasError{
     TypeConversion,
     Byte,
-    ByteLen,
+    ByteConversion,
+    BufLen,
     Read,
     Cmd,
     SasProperty(String),
@@ -365,13 +403,13 @@ impl Encodings{
             Encodings::SingleByte(x) => {
                 match x.decode(bytes, DecoderTrap::Strict){
                     Ok(val) => Ok(val),
-                    Err(_) => Err(SasError::SasProperty("UTF8 conversion failed".to_string())),
+                    Err(_) => Err(SasError::ByteConversion),
                 }
             }
             Encodings::MultiByte(x) =>  {
                 match x.decode(bytes, DecoderTrap::Strict){
                     Ok(val) => Ok(val),
-                    Err(_) => Err(SasError::SasProperty("UTF8 conversion failed".to_string())),
+                    Err(_) => Err(SasError::ByteConversion),
                 }
             }
         }
@@ -478,7 +516,7 @@ impl SAS7bdat{
 
         let mut tmp_buf : Vec<u8> = vec![0;self.props.hdr_len - 288]; 
         if self.buf_rdr.read_exact(&mut tmp_buf[0..(self.props.hdr_len - 288)]).is_err(){
-            return Err(SasError::Byte);
+            return Err(SasError::Read);
         }
 
         self.cached_page.extend_from_slice(&tmp_buf);
@@ -506,6 +544,7 @@ impl SAS7bdat{
         }
         Ok(())
     }
+
     fn process_sub_hdr_ptrs(&mut self, off : usize, ptr_idx : usize) -> Result<SubHdrPtr, SasError>{
         let len = self.props.int_len;
         let sub_hdr_ptr_len = self.props.sub_hdr_ptr_len;
@@ -531,6 +570,7 @@ impl SAS7bdat{
         sub_hdr_sig.copy_from_slice(&self.buf[0..len]);
         Ok(sub_hdr_sig)
     }
+
     fn get_sub_hdr_idx(&self, sig : Vec<u8>, compression: usize, ptype : usize) -> Result<usize, SasError> {
         match self.hdr_sig_map.get(&sig){
             Some(val) => Ok(*val),
@@ -578,8 +618,8 @@ impl SAS7bdat{
 
     fn process_col_txt_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
         off += self.props.int_len;
-        let txt_block_sz = len - self.props.int_len;
-        //let txt_block_sz = self.read_int(off, TEXT_BLOCK_SIZE_LENGTH)?;
+        //let txt_block_sz = len - self.props.int_len;
+        let txt_block_sz = self.read_int(off, TEXT_BLOCK_SIZE_LENGTH)?;
         self.read_bytes(off, txt_block_sz)?;
         //println!("{:?}", &self.buf[0..txt_block_sz]);
         self.col_name_strings.push(self.buf[0..txt_block_sz].to_vec());
@@ -651,9 +691,11 @@ impl SAS7bdat{
             }
             Ok(()) 
         }
+
         fn process_col_list_sub_hdr(&mut self, _off : usize, _len : usize) -> Result<(), SasError>{
             Ok(())
         }
+
         fn process_col_attr_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError> {
             let int_len = self.props.int_len;
             let col_attrs_vecs_cnt = (len - 2 * int_len - 12)/ (int_len + 8);
@@ -674,7 +716,7 @@ impl SAS7bdat{
             Ok(())
         }
 
-        fn process_format_sub_hdr(&mut self, off : usize, len : usize) -> Result<(), SasError>{
+        fn process_format_sub_hdr(&mut self, off : usize) -> Result<(), SasError>{
             let int_len = self.props.int_len;
             let txt_sub_hdr_format = off + COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_OFFSET + 3 * int_len;
             let col_format_off = off + COLUMN_FORMAT_OFFSET_OFFSET + 3 * int_len;
@@ -724,7 +766,7 @@ impl SAS7bdat{
         fn parse_metadata(&mut self) -> Result<(), SasError> {
             loop {
                 if self.buf_rdr.read_exact(&mut self.cached_page).is_err(){
-                    return Err(SasError::SasProperty("Failed to fully fill metapage into cache".to_string()));
+                    return Err(SasError::Read);
                 }
                 match self.process_page_meta() {
                     Ok(done) => if done {
@@ -739,23 +781,23 @@ impl SAS7bdat{
         fn is_page_metamix_amd(&self, page_type : isize) -> bool{
             matches!(page_type, PAGE_META_TYPE | 512 | 640 | PAGE_AMD_TYPE)
         }
+
         fn is_page_mix_type(&self, val : isize) -> bool{
             matches!(val, 512 | 640)
         }
+
         fn is_page_mix_data_type(&self, val : isize) -> bool {
             matches!(val, 512 | 640 | 256)
         }
+
         fn check_page_type(&self, cur_page : isize) -> bool {
             !matches!(cur_page, PAGE_META_TYPE | PAGE_DATA_TYPE | 512 | 640)
         }
+
         fn process_page_meta(&mut self) -> Result<bool, SasError> {
-            if let Err(msg) = self.read_page_hdr(){
-                return Err(msg);
-            }
+            self.read_page_hdr()?;
             if self.is_page_metamix_amd(self.cur_page_type){
-                if let Err(msg) = self.process_page_metadata() {
-                    return Err(msg);
-                }
+                self.process_page_metadata()?;
             }
             Ok(self.is_page_mix_data_type(self.cur_page_type) || !self.cur_page_data_sub_hdr_pointers.is_empty())
         }
@@ -774,7 +816,7 @@ impl SAS7bdat{
                 COL_TEXT_IDX => self.process_col_txt_sub_hdr(off, len),
                 COL_NAME_IDX => self.process_col_name_sub_hdr(off, len),
                 COL_ATTR_IDX => self.process_col_attr_sub_hdr(off, len),
-                FMT_AND_LABEL_IDX => self.process_format_sub_hdr(off, len),
+                FMT_AND_LABEL_IDX => self.process_format_sub_hdr(off),
                 COL_LIST_IDX => self.process_col_list_sub_hdr(off, len),
                 SUB_HDR_CNT_IDX => self.process_sub_hdr_counts(off, len),
                 DATA_SUBHDR_IDX => {
@@ -804,12 +846,13 @@ impl SAS7bdat{
                 self.buf.resize(2 * len, 0);
             }
         }
+
         fn read_bytes(&mut self, off : usize, len : usize) -> Result<(), SasError> {
             self.ensure_buf_len(len);
             if self.cached_page.is_empty(){
                 self.buf_rdr.seek(SeekFrom::Start(off.try_into().unwrap())).expect("Failed to seek file");
                 if self.buf_rdr.read_exact(&mut self.buf[0..len]).is_err(){
-                    return Err(SasError::Byte);
+                    return Err(SasError::Read);
                 }
             } else {
                 if off + len > self.cached_page.len(){
@@ -819,6 +862,7 @@ impl SAS7bdat{
             }
             Ok(())
         }
+
         fn read_float(&self, off : usize, w : usize) -> f64{
             match self.byte_order {
                 Endian::Big => f64::from_be_bytes(self.buf[off..(off + w)].try_into().unwrap()),
@@ -844,13 +888,15 @@ impl SAS7bdat{
                     Ok(val) => Ok(val),
                     Err(_) => Err(SasError::TypeConversion),
                 }
-                _ => panic!("Invalid int width"),
+                _ => Err(SasError::TypeConversion),
             }
         }
+
         fn read_int(&mut self, off :usize, w :usize) -> Result<usize, SasError> {
             self.read_bytes(off, w)?;
             self.read_int_from_buf(w)
         }
+
         fn read_signed_int_from_buf(&self, w : usize) -> Result<isize, SasError> {
 
             match w {
@@ -873,6 +919,7 @@ impl SAS7bdat{
                 _ => panic!("Invalid int width"),
             }
         }
+
         fn read_signed_int(&mut self, off :usize, w :usize) -> Result<isize, SasError> {
             self.read_bytes(off, w)?;
             self.read_signed_int_from_buf(w)
@@ -892,7 +939,7 @@ impl SAS7bdat{
                         }
                     }
                     None => {
-                        return Err(SasError::SasProperty("Compressor specified, but not returned?".to_string()));
+                        return Err(SasError::SasProperty("Compressor specified, but not found".to_string()));
                     }
                 }
             } else {
@@ -916,24 +963,35 @@ impl SAS7bdat{
                 let start = self.col_data_off[j];
                 let end = start + len;
                 let tmp = &src[start..end];
-                //Handle numeric types: TODO add proper date conversion
+                //Handle numeric types: 
                 if self.cols[j].ctype == SAS_NUM_TYPE {
-                    //let s = 8 * self.cur_row_in_chunk_idx;
-                    let mut buf = vec![0;8];
-                    let num;
-                    match self.byte_order {
-                        Endian::Little => {
-                            let m = 8 - len;
-                            buf[m .. 8].copy_from_slice(tmp);
-                            num = f64::from_le_bytes(buf.try_into().unwrap());
-                        }
-                        Endian::Big => {
-                            buf[0 .. len].copy_from_slice(tmp);
-                            num = f64::from_be_bytes(buf.try_into().unwrap());
-                        }
+                    //First perform float conversion
+                    self.float_buf = [0;8];
+                    let num = 
+                        match self.byte_order {
+                            Endian::Little => {
+                                let m = 8 - len;
+                                self.float_buf[m .. 8].copy_from_slice(tmp);
+                                f64::from_le_bytes(self.float_buf)
+                            }
+                            Endian::Big => {
+                                self.float_buf[0 .. len].copy_from_slice(tmp);
+                                f64::from_be_bytes(self.float_buf)
+                            }
+                        };
+
+                    //Check which kind of datetype is given, then convert according 
+                    //to definition.
+                    if self.col_formats[j] == "DATE"|| self.col_formats[j] == "DDMMYY"{
+                        let new = self.date_base + Duration::days(num as i64);
+                        self.row_vals[j] = SasVal::Date(new.date_naive());
+                    } else if self.col_formats[j] == "DATETIME"{
+                        let new = self.date_base + Duration::seconds(num as i64);
+                        self.row_vals[j] = SasVal::DateTime(new);
+                    } else {
+                        self.row_vals[j] = SasVal::Numeric(num);
                     }
-                    self.row_vals[j] = SasVal::Numeric(num);
-                    //println!("{num}");
+
                     //Handle String types
                 } else {
                     let mut st = self.utf_8(tmp)?;
@@ -942,16 +1000,6 @@ impl SAS7bdat{
                     }
                     self.row_vals[j] = SasVal::Text(st);
                     //println!("{st}");
-
-                    //match self.string_pool_r.get(&st) {
-                    //    Some(num) => self.string_chunk[j][self.cur_row_in_chunk_idx] = *num,
-                    //    None => {
-                    //        let num = self.string_pool.len();
-                    //        self.string_pool.insert(num.try_into().unwrap(), st.clone());
-                    //        self.string_pool_r.insert(st, num.try_into().unwrap());
-                    //        self.string_chunk[j][self.cur_row_in_chunk_idx] = num.try_into().unwrap();
-                    //    }
-                    //}
                 }
             }
 
@@ -1007,7 +1055,7 @@ impl SAS7bdat{
                 if self.cur_page_type == PAGE_META_TYPE {
                     if self.cur_row_on_page_idx >= self.cur_page_data_sub_hdr_pointers.len() {
                         match self.read_next_page(){
-                            Ok(true) => return Ok(true),
+                            Ok(true) => return Ok(false),
                             Ok(false) =>{ 
                                 self.cur_row_on_page_idx = 0;
                                 continue;
@@ -1017,7 +1065,7 @@ impl SAS7bdat{
                     }
                     let cur_sub_hdr_ptr = &self.cur_page_data_sub_hdr_pointers[self.cur_row_on_page_idx];
                     match self.process_byte_array_with_data(cur_sub_hdr_ptr.off, cur_sub_hdr_ptr.len){
-                        Ok(()) => return Ok(false),
+                        Ok(()) => return Ok(true),
                         Err(val) => return Err(val),
                     }
                 } else if self.is_page_mix_type(self.cur_page_type) {
@@ -1031,123 +1079,47 @@ impl SAS7bdat{
                         self.cur_row_on_page_idx * self.props.row_len +
                         align_corr;
                     if self.process_byte_array_with_data(off, self.props.row_len).is_err() {
-                        return Err(SasError::SasProperty("Could not process bytearray".to_string()));
+                        return Err(SasError::SasProperty("Could not process byte array".to_string()));
                     }
                     if self.cur_row_on_page_idx == min(self.row_count, self.props.mix_page_row_cnt){
                         match self.read_next_page(){
-                            Ok(true) => return Ok(true),
+                            Ok(true) => return Ok(false),
                             Err(val) => return Err(val),
                             Ok(false) => {
                                 self.cur_row_on_page_idx = 0;
                             }
                         }
                     }
-                    return Ok(false);
+                    return Ok(true);
                 } else if self.cur_page_type == PAGE_DATA_TYPE {
                     if self.process_byte_array_with_data(
                         bit_off + SUBHEADER_POINTERS_OFFSET + self.cur_row_on_page_idx * self.props.row_len,
                         self.props.row_len).is_err(){
-                        return Err(SasError::SasProperty("Failed to process bytes".to_string()));
+                        return Err(SasError::SasProperty("Could not process byte array".to_string()));
                     }
                     if self.cur_row_on_page_idx == self.cur_page_block_count {
                         match self.read_next_page(){
-                            Ok(true) => return Ok(true),
+                            Ok(true) => return Ok(false),
                             Err(val) => return Err(val),
                             Ok(false) => {
                                 self.cur_row_on_page_idx = 0;
                             }
                         }
                     }
-                    return Ok(false);
+                    return Ok(true);
                 } else {
                     return Err(SasError::SasProperty(format!("unknown page type : {}", self.cur_page_type)));
                 }
             }
         }
 
-        fn chunk_to_series(&self){
-            let n = self.cur_row_in_chunk_idx;
-            for j in 0..self.props.col_cnt{
-                println!("{}", self.col_names[j]);
-                match self.col_types[j]{
-                    SAS_NUM_TYPE => {
-                        let mut vec = vec![0.0;n];
-                        let buf = &self.byte_chunk[j][0..8 * n];
-                        for k in 0..n{
-                            vec[k] = f64::from_le_bytes(buf[k * 8..(k + 1) * 8].try_into().unwrap());
-                        }
-                        //             for el in vec{
-                        //                 println!("{el}");
-                        //             }
-                    }
-                    SAS_STRING_TYPE => {
-                        if self.factor_strings{
-                            let mut s = Vec::with_capacity(n);
-                            s.extend_from_slice(&self.string_chunk[j]);
-                        } else {
-                            let mut s = vec!["".to_string(); n];
-                            for i in 0..n{
-                                match self.string_pool.get(&self.string_chunk[j][i]){
-                                    Some(x) => s[i] = x.to_string(),
-                                    None => s[i] = "".to_string(),
-                                }
-                            }
-                            //                 for st in s{
-                            //                     println!("{st}");
-                            //                 }
-                        }
-                    }
-                    _ => println!("non existing datatype"), //Err(SasError::SasProperty(format!("Non existing datatype for column {}", self.col_names[j]))), 
-                }
-            }
-        }
-
-        //fn allocate_buffers(&mut self, num_rows : usize) -> Result<(), SasError>{
-        //    //allocation of new buffers
-        //    self.string_pool = HashMap::new();
-        //    self.string_pool_r = HashMap::new();
-
-        //    self.byte_chunk = vec![Vec::new();self.props.col_cnt];
-        //    self.string_chunk = vec![Vec::new();self.props.col_cnt];
-
-        //    for j in 0..self.props.col_cnt{
-        //        match self.col_types[j]{
-        //            SAS_NUM_TYPE => self.byte_chunk[j] = vec![0; 8 * num_rows],
-        //            SAS_STRING_TYPE => self.string_chunk[j] = vec![0; num_rows],
-        //            _ => return Err(SasError::SasProperty("Unknown col type".to_string())),
-        //        }
-        //    }
-        //    Ok(())
-
-        //}
-
-        fn read(&mut self, num_rows : usize) -> Result<(), SasError>{
-            if self.cur_row_in_file_idx >= self.row_count{
-                return Err(SasError::SasProperty("current row idx bigger than number of rows in dataset".to_string()));
-            }
-
-            self.cur_row_in_chunk_idx = 0;
-            for _ in 0..num_rows{
-                match self.read_line(){
-                    Ok(true) => {
-                        break;
-                    }
-                    Err(val) => return Err(val),
-                    Ok(false) => (),
-                }
-            }
-            //self.chunk_to_series();
-            Ok(())
-        }
-
         fn new(reader : std::io::BufReader<File>) ->Result<SAS7bdat, SasError> {
             let mut sas = SAS7bdat{
-                iter_idx : 0,
+                date_base : Utc.with_ymd_and_hms(1960,1,1,0,0,0).unwrap(),
+                float_buf : [0;8],
                 row_vals : Vec::new(),
                 col_formats : Vec::default(),
                 trim_strings : false,
-                convert_dates : false,
-                factor_strings : false,
                 no_align_correction : false,
                 date_created : 0.,
                 date_modified : 0.,
@@ -1176,8 +1148,6 @@ impl SAS7bdat{
                 cur_row_in_file_idx : usize::default(),
                 cur_row_on_page_idx : usize::default(),
                 cur_page_data_sub_hdr_pointers : Vec::default(),
-                string_chunk : Vec::default(),
-                byte_chunk : Vec::default(),
                 cur_row_in_chunk_idx : usize::default(),
                 col_name_strings : Vec::default(),
                 col_data_off : Vec::default(),
@@ -1186,8 +1156,6 @@ impl SAS7bdat{
                 props : SasProperties::default(),
                 encoding_map : get_encoding_map(),
                 hdr_sig_map : get_hdr_sig_map(),
-                string_pool : HashMap::default(),
-                string_pool_r :HashMap::default(),
             };
             sas.get_properties()?;
             sas.cached_page = vec![0;sas.props.page_len];
@@ -1300,7 +1268,7 @@ impl SAS7bdat{
             }
         }
         if res.len() != res_len{
-            return Err(SasError::ByteLen);
+            return Err(SasError::BufLen);
         }
         Ok(res)
     }
@@ -1369,8 +1337,10 @@ impl SAS7bdat{
 
             }
         }
+
         if res.len() != res_len {
-            return Err(SasError::ByteLen);
+            return Err(SasError::BufLen);
         }
+
         Ok(res)
     }
