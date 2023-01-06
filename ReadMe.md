@@ -12,7 +12,7 @@ encodings are supported.
 Some minimal example code, covering most
 of the public API:
 
-```
+```rust
 use std::fs::File;
 use std::io::BufReader;
 use sas::*;
