@@ -41,3 +41,4 @@ fn main() -> Result<(), SasError> {
 - Add support for other encodings.  
 - Testing  
 - Implement iterator?  
+- Use of serde like rust-csv?
