@@ -1,3 +1,4 @@
+#General overview
 This code is a straightforward port of 
 https://github.com/kshedden/datareader
 made as an exercise to observe the 
@@ -36,6 +37,6 @@ fn main() -> Result<(), SasError> {
 
 TODO:
 
--Add support for other encodings.
--Testing
--Implement iterator?
+-Add support for other encodings.  
+-Testing  
+-Implement iterator?  
