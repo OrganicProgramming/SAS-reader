@@ -1,10 +1,13 @@
 This code is a straightforward port of 
 https://github.com/kshedden/datareader
-to experience the similarities and 
+made as an exercise to observe the 
 differences between Go and Rust for
-file/byte manipulations. This library
+file/byte manipulations after reading 
+the Rust book. This library
 reads the SAS7bdat linewise such that
 files of arbitrary sizes can be processed.
+For the moment only Western Latin and UTF-8
+encodings are supported.
 
 Some minimal example code, covering most
 of the public API:
@@ -21,8 +24,8 @@ fn main() -> Result<(), SasError> {
         for (idx, el) in sas.col_names.iter().enumerate(){
             println!("{el}:");
             match &sas.row_vals[idx]{
-                SasVal::Numeric(x) => println!("{x}"),//println!("{el} = {}", x),
-                SasVal::Text(x) => println!("{x}"),//println!("{el} = {}", x),
+                SasVal::Numeric(x) => println!("{x}"),
+                SasVal::Text(x) => println!("{x}"),
                 _ => println!("Probably a date value"),
             };
         }
@@ -30,3 +33,4 @@ fn main() -> Result<(), SasError> {
     Ok(())
 }
 ```
+
