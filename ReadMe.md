@@ -34,3 +34,8 @@ fn main() -> Result<(), SasError> {
 }
 ```
 
+TODO:
+
+-Add support for other encodings.
+-Testing
+-Implement iterator?
