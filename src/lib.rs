@@ -7,83 +7,6 @@ use encoding::codec::singlebyte::SingleByteEncoding;
 use encoding::codec::utf_8::UTF8Encoding;
 use chrono::prelude::*;
 use chrono::{Duration, Utc, NaiveDate};
-//use std::env;
-
-//fn create_table_string(sas : &SAS7bdat, name : &str) -> String{
-//    let mut create_table = format!("create table if not exists {name} (");
-//    let len = sas.col_names.len();
-//    for idx in 0..len{
-//        let ap = if idx < len - 1 {
-//            ","
-//        } else {
-//            ");"
-//        };
-//        match (&sas.col_names[idx], &sas.col_types[idx]){
-//            (nm, 0) => create_table += format!("{} {}{}", nm, "INTEGER", ap).as_str(),
-//            (nm, 1) => create_table += format!("{} {}{}", nm, "TEXT", ap).as_str(),
-//            _ => create_table += "",
-//        }
-//    }
-//    create_table
-//}
-//
-//fn sqlite_insert(sas : &SAS7bdat, statement : &mut sqlite::Statement) {
-//    let len = sas.row_vals.len();
-//    for idx in 0..len{
-//        match &sas.row_vals[idx]{
-//            SasVal::Numeric(x) => statement.bind(idx + 1, *x).unwrap(),
-//            SasVal::Text(x) => statement.bind(idx + 1, x.as_str()).unwrap(), 
-//        }
-//    }
-//    statement.next().unwrap();
-//    statement.reset().unwrap();
-//}
-//
-//fn make_statement_string(sas : &SAS7bdat, name : &str) -> String{
-//    let question_marks = vec!["?"; sas.col_names.len()];
-//    format!("insert into {name} values ({});", question_marks.join(","))
-//}
-
-//fn main() -> Result<(), SasError> {
-//    let args : Vec<String> = env::args().collect();
-//    let name = &args[1];
-//    let sas_reader = BufReader::new(File::open(name).unwrap());
-//    //let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tum.sas7bdat")?);
-//    let mut sas = SAS7bdat::new(sas_reader)?;
-//    //let conn = sqlite::open("super.db").unwrap();
-//    //conn.execute("begin transaction;").unwrap();
-//    //dbg!(conn.execute(create_table_string(&sas, "jos")).unwrap());
-//    //let mut statement = conn.prepare(make_statement_string(&sas, "jos")).unwrap();
-//    while !sas.read_line()?{
-//        //sqlite_insert(&sas, &mut statement);
-//        //for (idx, el) in sas.col_names.iter().enumerate(){
-//        //    //dbg!(create_insert_string(&sas.row_vals, "jos"));
-//        //    //match &sas.row_vals[idx]{
-//        //    //    SasVal::Numeric(x) => x.to_string(),//println!("{el} = {}", x),
-//        //    //    SasVal::Text(x) => x.to_string(),//println!("{el} = {}", &x),
-//        //    //};
-//        //}
-//    }
-//    //conn.execute("commit;").unwrap();
-//    Ok(())
-//}
-
-fn main() -> Result<(), SasError> {
-    let sas_reader = BufReader::new(File::open("/home/jos/Downloads/tume(1).sas7bdat").unwrap());
-    let mut sas = SAS7bdat::new(sas_reader)?;
-    while sas.read_line()?{
-        for (idx, val) in sas.row_vals.iter().enumerate(){
-            //println!("{} :", &sas.col_names[idx]);
-            match val{
-                SasVal::Numeric(x) =>(), //println!("{}", x),
-                SasVal::Text(x) =>(), //println!("{}", x),
-                SasVal::Date(x) =>(), //println!("{}", x),
-                SasVal::DateTime(x) =>(), //println!("{}", x),
-            }
-        }
-    }
-    Ok(())
-}
 
 #[derive(Default, Debug)]
 enum Endian{
@@ -93,7 +16,7 @@ enum Endian{
 }
 
 #[derive(Clone, Debug)]
-enum SasVal{
+pub enum SasVal{
     Numeric(f64),
     Text(String),
     Date(NaiveDate),
@@ -103,9 +26,9 @@ enum SasVal{
 type Decompressor = fn(usize, &[u8]) -> Result<Vec<u8>, SasError>;
 
 //#[derive(Default)]
-struct SAS7bdat{
+pub struct SAS7bdat<R>{
     date_base : DateTime<Utc>,
-    row_vals : Vec<SasVal>,
+    pub row_vals : Vec<SasVal>,
     col_formats : Vec<String>,
     trim_strings : bool,
     no_align_correction : bool,
@@ -126,10 +49,10 @@ struct SAS7bdat{
     row_count : usize,
     col_types : Vec<u16>,
     col_labels : Vec<String>,
-    col_names : Vec<String>,
+    pub col_names : Vec<String>,
     buf : Vec<u8>,
     float_buf : [u8;8],
-    buf_rdr : BufReader<File>,
+    buf_rdr : BufReader<R>,
     cached_page : Vec<u8>,
     cur_page_type : isize,
     cur_page_block_count : usize,
@@ -363,7 +286,7 @@ impl ByteNum for f64{
 }
 
 #[derive(Debug)]
-enum SasError{
+pub enum SasError{
     TypeConversion,
     Byte,
     ByteConversion,
@@ -416,23 +339,23 @@ impl Encodings{
     }
 }
 
-impl Iterator for SAS7bdat{
-    type Item = Vec<SasVal>;
+//impl<R> Iterator for SAS7bdat<R>{
+//    type Item = Vec<SasVal>;
+//
+//    fn next(&mut self) -> Option<Self::Item>{
+//        match self.read_line(){
+//            Ok(false) => {
+//                Some(self.row_vals.clone())
+//            }
+//            Ok(true) => {
+//                None
+//            }
+//            Err(_) => panic!("Could not read all lines!"),
+//        }
+//    }
+//}
 
-    fn next(&mut self) -> Option<Self::Item>{
-        match self.read_line(){
-            Ok(false) => {
-                Some(self.row_vals.clone())
-            }
-            Ok(true) => {
-                None
-            }
-            Err(_) => panic!("Could not read all lines!"),
-        }
-    }
-}
-
-impl SAS7bdat{
+impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
         self.text_decoder.decode(bytes)
     }
@@ -1042,7 +965,7 @@ impl SAS7bdat{
             Ok(false)
         }
 
-        fn read_line(&mut self) -> Result<bool, SasError> {
+        pub fn read_line(&mut self) -> Result<bool, SasError> {
             let bit_off = self.props.page_bit_off;
             let sub_hdr_ptr_len = self.props.sub_hdr_ptr_len;
 
@@ -1113,7 +1036,7 @@ impl SAS7bdat{
             }
         }
 
-        fn new(reader : std::io::BufReader<File>) ->Result<SAS7bdat, SasError> {
+        pub fn new(reader : std::io::BufReader<R>) -> Result<SAS7bdat<R>, SasError> {
             let mut sas = SAS7bdat{
                 date_base : Utc.with_ymd_and_hms(1960,1,1,0,0,0).unwrap(),
                 float_buf : [0;8],
