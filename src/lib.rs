@@ -339,21 +339,21 @@ impl Encodings{
     }
 }
 
-//impl<R> Iterator for SAS7bdat<R>{
-//    type Item = Vec<SasVal>;
-//
-//    fn next(&mut self) -> Option<Self::Item>{
-//        match self.read_line(){
-//            Ok(false) => {
-//                Some(self.row_vals.clone())
-//            }
-//            Ok(true) => {
-//                None
-//            }
-//            Err(_) => panic!("Could not read all lines!"),
-//        }
-//    }
-//}
+impl<R: std::io::Read + std::io::Seek> Iterator for SAS7bdat<R>{
+    type Item = Vec<SasVal>;
+
+    fn next(&mut self) -> Option<Self::Item>{
+        match self.read_line(){
+            Ok(true) => {
+                Some(self.row_vals.clone())
+            }
+            Ok(false) => {
+                None
+            }
+            Err(_) => panic!("Could not read all lines!"),
+        }
+    }
+}
 
 impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
@@ -527,7 +527,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
         self.props.lcp = self.read_int(lcp_off, 2)?;
         Ok(())
     }
-    
+
     fn process_col_size_sub_hdr(&mut self, mut off : usize, len : usize) -> Result<(), SasError> {
         let int_len = self.props.int_len;
         off += int_len;
