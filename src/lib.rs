@@ -288,7 +288,9 @@ impl ByteNum for f64{
 #[derive(Debug)]
 pub enum SasError{
     TypeConversion,
-    Byte,
+    UnknownDecoder,
+    UnexpectedEndOfControlByte,
+    ControlByte,
     ByteConversion,
     BufLen,
     Read,
@@ -356,13 +358,10 @@ impl<R: std::io::Read + std::io::Seek> Iterator for SAS7bdat<R>{
 }
 
 impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
+
     fn utf_8(&self, bytes : &[u8]) -> Result<String, SasError>{
         self.text_decoder.decode(bytes)
     }
-
-    //fn string_factor_map(&self) -> &HashMap<u64, String>{
-    //    &self.string_pool
-    //}
 
     fn get_decompressor(&self)  -> Option<Decompressor>{
         match self.compression.as_str() {
@@ -418,7 +417,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                     "wlatin1" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1252),
                     "wlatin2" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1250),
                     "utf-8" => self.text_decoder = Encodings::MultiByte(UTF8Encoding),
-                    _ => return Err(SasError::TypeConversion),
+                    _ => return Err(SasError::UnknownDecoder),
                 }
             }
             None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
@@ -854,7 +853,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                 let decomp = self.get_decompressor();
                 match decomp {
                     Some(f) => {
-                        match f(self.props.row_len, &self.cached_page[off..off + len]) {
+                        match f(self.props.row_len, &self.cached_page[off .. off + len]) {
                             Ok(vec) => {
                                 src = vec;
                             }
@@ -874,7 +873,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                         Err(_) => return Err(SasError::SasProperty("Error reading next page!".to_string())),
                     }
                 }
-                src = self.cached_page[off..off + len].to_vec();
+                src = self.cached_page[off .. off + len].to_vec();
             };
 
             for j in 0..self.props.col_cnt{
@@ -1110,16 +1109,17 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
             inbuf = &inbuf[1..];
             match control_byte {
                 0x00 => {
-                    if end_of_first_byte != 0 {
-                        return Err(SasError::Byte);
-                    }
-                    let nbytes = usize::from(inbuf[0]) + 64;
+                    //if end_of_first_byte != 0 {
+                    //    return Err(SasError::UnexpectedEndOfControlByte);
+                    //}
+                    //let nbytes = usize::from(inbuf[0]) + 64;
+                    let nbytes = usize::from(inbuf[0]) + 64 + end_of_first_byte * 256;
                     inbuf = &inbuf[1..];  
-                    res.extend_from_slice(inbuf);
+                    res.extend_from_slice(&inbuf);
                     inbuf = &inbuf[nbytes..];
                 }
                 0x40 => {
-                    let nbytes = end_of_first_byte * 16 + usize::from(inbuf[0]);
+                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 18;
                     inbuf = &inbuf[1..];
                     for _ in 0..nbytes{
                         res.push(inbuf[0]);
@@ -1187,10 +1187,12 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                         res.push(0x00);
                     }
                 }
-                _ => { return Err(SasError::Byte); }
+                _ => { return Err(SasError::ControlByte); }
             }
         }
         if res.len() != res_len{
+            println!("rle");
+            println!("cur_len {} is not equalt to requested_len {res_len}", res.len());
             return Err(SasError::BufLen);
         }
         Ok(res)
