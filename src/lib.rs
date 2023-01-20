@@ -1113,9 +1113,10 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                     //    return Err(SasError::UnexpectedEndOfControlByte);
                     //}
                     //let nbytes = usize::from(inbuf[0]) + 64;
+                    println!("got you a 0");
                     let nbytes = usize::from(inbuf[0]) + 64 + end_of_first_byte * 256;
                     inbuf = &inbuf[1..];  
-                    res.extend_from_slice(&inbuf);
+                    res.extend_from_slice(&inbuf[0..nbytes]);
                     inbuf = &inbuf[nbytes..];
                 }
                 0x40 => {
