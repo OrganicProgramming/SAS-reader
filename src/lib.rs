@@ -1203,11 +1203,13 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                 _ => { return Err(SasError::ControlByte); }
             }
         }
+
         if res.len() != res_len{
             println!("rle");
             println!("cur_len {} is not equalt to requested_len {res_len}", res.len());
             return Err(SasError::BufLen);
         }
+
         Ok(res)
     }
 

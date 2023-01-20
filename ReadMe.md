@@ -9,7 +9,9 @@ the Rust book. This library
 reads the SAS7bdat linewise such that
 files of arbitrary sizes can be processed.
 For the moment only Western Latin and UTF-8
-encodings are supported.
+encodings are supported. Corrections to 
+the RLE decompression where added with the 
+help of https://github.com/WizardMac/ReadStat.
 
 Some minimal example code, covering most
 of the public API:
