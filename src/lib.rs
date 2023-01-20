@@ -1118,14 +1118,14 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                     res.extend_from_slice(&inbuf[0..nbytes]);
                     inbuf = &inbuf[nbytes..];
                 }
-                0x01 => {
+                0x10 => {
                     let nbytes = usize::from(inbuf[0]) + 64 + end_of_first_byte * 256 + 4096;
                     inbuf = &inbuf[1..];  
                     res.extend_from_slice(&inbuf[0..nbytes]);
                     inbuf = &inbuf[nbytes..];
 
                 }
-                0x02 => {
+                0x20 => {
                     let nbytes = end_of_first_byte + 96;
                     res.extend_from_slice(&inbuf[0..nbytes]);
                     inbuf = &inbuf[nbytes..];
