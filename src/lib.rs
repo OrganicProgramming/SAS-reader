@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
+use std::cmp;
 use encoding::{Encoding, DecoderTrap};
 use encoding::all::*;
 use encoding::codec::singlebyte::SingleByteEncoding;
@@ -296,14 +297,6 @@ pub enum SasError{
     Read,
     Cmd,
     SasProperty(String),
-}
-
-fn min(x : usize, y : usize) -> usize {
-    if x < y {
-        x
-    } else {
-        y
-    }
 }
 
 fn contains_bytes(bytes : &Vec<u8>, txt : &str) -> bool{
@@ -647,11 +640,11 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
             let col_label_offset = off + COLUMN_LABEL_OFFSET_OFFSET + 3 * int_len;
             let col_label_len = off + COLUMN_LABEL_LENGTH_OFFSET + 3 * int_len;
             let mut format_idx = self.read_int(txt_sub_hdr_format, COLUMN_FORMAT_TEXT_SUBHEADER_INDEX_LENGTH)?;
-            format_idx = min(format_idx, self.col_name_strings.len() - 1);
+            format_idx = cmp::min(format_idx, self.col_name_strings.len() - 1);
             let format_start = self.read_int(col_format_off, COLUMN_FORMAT_OFFSET_LENGTH)?;
             let format_len = self.read_int(col_format_len, COLUMN_FORMAT_LENGTH_LENGTH)?;
             let mut label_idx = self.read_int(txt_sub_hdr_label, COLUMN_LABEL_TEXT_SUBHEADER_INDEX_LENGTH)?;
-            label_idx = min(label_idx, self.col_name_strings.len() - 1);
+            label_idx = cmp::min(label_idx, self.col_name_strings.len() - 1);
             let label_start = self.read_int(col_label_offset, COLUMN_LABEL_OFFSET_LENGTH)?;
             let label_len = self.read_int(col_label_len, COLUMN_LABEL_LENGTH_LENGTH)?;
             let label_names = &self.col_name_strings[label_idx];
@@ -1003,7 +996,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                     if self.process_byte_array_with_data(off, self.props.row_len).is_err() {
                         return Err(SasError::SasProperty("Could not process byte array".to_string()));
                     }
-                    if self.cur_row_on_page_idx == min(self.row_count, self.props.mix_page_row_cnt){
+                    if self.cur_row_on_page_idx == cmp::min(self.row_count, self.props.mix_page_row_cnt){
                         match self.read_next_page(){
                             Ok(true) => return Ok(false),
                             Err(val) => return Err(val),
@@ -1102,82 +1095,77 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
 
     fn rle_decompress(res_len : usize, input : &[u8]) -> Result<Vec<u8>, SasError>{
         let mut res : Vec<u8> = Vec::with_capacity(res_len);
-        let mut inbuf = input;
-        while !inbuf.is_empty() {
-            let control_byte = inbuf[0] & 0xF0;
-            let end_of_first_byte = usize::from(inbuf[0] & 0x0F);
-            inbuf = &inbuf[1..];
+        let len = input.len();
+        let mut cur_idx = 0;
+        while cur_idx < len{
+            let control_byte = input[cur_idx] & 0xF0;
+            let end_of_first_byte = usize::from(input[cur_idx] & 0x0F);
+            cur_idx += 1;
             match control_byte {
                 0x00 => {
-                    //if end_of_first_byte != 0 {
-                    //    return Err(SasError::UnexpectedEndOfControlByte);
-                    //}
-                    //let nbytes = usize::from(inbuf[0]) + 64;
-                    let nbytes = usize::from(inbuf[0]) + 64 + end_of_first_byte * 256;
-                    inbuf = &inbuf[1..];  
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
+                    let nbytes = usize::from(input[cur_idx]) + 64 + end_of_first_byte * 256;
+                    cur_idx += 1;
+                    res.extend_from_slice(&input[cur_idx..cur_idx + nbytes]);
+                    cur_idx += nbytes 
                 }
                 0x10 => {
-                    let nbytes = usize::from(inbuf[0]) + 64 + end_of_first_byte * 256 + 4096;
-                    inbuf = &inbuf[1..];  
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
+                    let nbytes = usize::from(input[cur_idx]) + 64 + end_of_first_byte * 256 + 4096;
+                    cur_idx += 1;
+                    res.extend_from_slice(&input[cur_idx..cur_idx +  nbytes]);
+                    cur_idx += nbytes;
 
                 }
                 0x20 => {
                     let nbytes = end_of_first_byte + 96;
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
-
+                    res.extend_from_slice(&input[cur_idx..cur_idx + nbytes]);
+                    cur_idx += nbytes;
                 }
                 0x40 => {
-                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 18;
-                    inbuf = &inbuf[1..];
+                    let nbytes = end_of_first_byte * 256 + usize::from(input[cur_idx]) + 18;
+                    cur_idx += 1;
                     for _ in 0..nbytes{
-                        res.push(inbuf[0]);
+                        res.push(input[cur_idx]);
                     }
-                    inbuf = &inbuf[1..];
+                    cur_idx += 1;
                 }
                 0x60 => {
-                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
-                    inbuf = &inbuf[1..];
+                    let nbytes = end_of_first_byte * 256 + usize::from(input[cur_idx]) + 17;
+                    cur_idx += 1;
                     for _ in 0..nbytes{
                         res.push(0x20);
                     }
                 }
                 0x70 => {
-                    let nbytes = end_of_first_byte * 256 + usize::from(inbuf[0]) + 17;
-                    inbuf = &inbuf[1..];
+                    let nbytes = end_of_first_byte * 256 + usize::from(input[cur_idx]) + 17;
+                    cur_idx += 1;
                     for _ in 0..nbytes{
                         res.push(0x00);
                     }
                 }
                 0x80 => {
                     let nbytes = end_of_first_byte + 1;
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
+                    res.extend_from_slice(&input[cur_idx.. cur_idx + nbytes]);
+                    cur_idx += nbytes;
                 }
                 0x90 => {
                     let nbytes = end_of_first_byte + 17;
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
+                    res.extend_from_slice(&input[cur_idx.. cur_idx + nbytes]);
+                    cur_idx += nbytes;
                 }
                 0xA0 => {
                     let nbytes = end_of_first_byte + 33;
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
+                    res.extend_from_slice(&input[cur_idx.. cur_idx + nbytes]);
+                    cur_idx += nbytes;
                 }
                 0xB0 => {
                     let nbytes = end_of_first_byte + 49;
-                    res.extend_from_slice(&inbuf[0..nbytes]);
-                    inbuf = &inbuf[nbytes..];
-
+                    res.extend_from_slice(&input[cur_idx..cur_idx + nbytes]);
+                    cur_idx += nbytes;
                 }
                 0xC0 => {
                     let nbytes = end_of_first_byte + 3;
-                    let x = inbuf[0];
-                    inbuf = &inbuf[1..];
+                    let x = input[cur_idx];
+                    cur_idx += 1;
                     for _ in 0..nbytes{
                         res.push(x);
                     }
@@ -1205,8 +1193,8 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
         }
 
         if res.len() != res_len{
-            println!("rle");
-            println!("cur_len {} is not equalt to requested_len {res_len}", res.len());
+            //println!("rle");
+            //println!("cur_len {} is not equalt to requested_len {res_len}", res.len());
             return Err(SasError::BufLen);
         }
 
