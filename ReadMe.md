@@ -8,8 +8,7 @@ file/byte manipulations after reading
 the Rust book. This library
 reads the SAS7bdat linewise such that
 files of arbitrary sizes can be processed.
-There is support for multiple encodings,
-(search the code for the Encodings implementation). 
+There is support for multiple encodings. 
 Corrections to the RLE decompression where added with the 
 help of https://github.com/WizardMac/ReadStat.
 
@@ -39,6 +38,6 @@ fn main() -> Result<(), SasError> {
 ```
 
 ## TODO:
-- Add builderpattern and refactor iterator
+- Refactor constructor and iterator.
 - Testing  
 - Use of serde like rust-csv?
