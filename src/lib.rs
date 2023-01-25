@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{SeekFrom, Read, Seek, BufReader};
 use std::cmp;
 use encoding::{Encoding, DecoderTrap};
@@ -67,7 +66,6 @@ pub struct SAS7bdat<R>{
     col_data_lens : Vec<usize>,
     cols : Vec<Col>,
     props : SasProperties,
-    encoding_map : HashMap<usize, &'static str>,
     hdr_sig_map : HashMap<Vec<u8>, usize>, 
 }
 
@@ -332,20 +330,49 @@ impl Encodings{
             }
         }
     }
+    
+    fn new(decoder_num : usize) -> Option<Self>{
+        match decoder_num{
+            20 => Some(Encodings::MultiByte(UTF8Encoding)),
+            29 => Some(Encodings::SingleByte(*ISO_8859_1)),
+            30 => Some(Encodings::SingleByte(*ISO_8859_2)),
+            31 => Some(Encodings::SingleByte(*ISO_8859_3)),
+            32 => Some(Encodings::SingleByte(*ISO_8859_4)),
+            33 => Some(Encodings::SingleByte(*ISO_8859_5)),
+            34 => Some(Encodings::SingleByte(*ISO_8859_6)),
+            35 => Some(Encodings::SingleByte(*ISO_8859_7)),
+            36 => Some(Encodings::SingleByte(*ISO_8859_8)),
+            //37 => Some(Encodings::SingleByte(*ISO_8859_9)) not supported by library,
+            38 => Some(Encodings::SingleByte(*ISO_8859_10)),
+            //39 => Some(Encodings::SingleByte(*ISO_8859_11)) not supported by library,
+            40 => Some(Encodings::SingleByte(*ISO_8859_15)),
+            51 => Some(Encodings::SingleByte(*WINDOWS_874)),
+            60 => Some(Encodings::SingleByte(*WINDOWS_1250)),
+            61 => Some(Encodings::SingleByte(*WINDOWS_1251)),
+            62 => Some(Encodings::SingleByte(*WINDOWS_1252)),
+            63 => Some(Encodings::SingleByte(*WINDOWS_1253)),
+            64 => Some(Encodings::SingleByte(*WINDOWS_1254)),
+            65 => Some(Encodings::SingleByte(*WINDOWS_1255)),
+            66 => Some(Encodings::SingleByte(*WINDOWS_1256)),
+            67 => Some(Encodings::SingleByte(*WINDOWS_1257)),
+            68 => Some(Encodings::SingleByte(*WINDOWS_1258)),
+            _ => None,
+        }
+    }
 }
 
 impl<R: std::io::Read + std::io::Seek> Iterator for SAS7bdat<R>{
-    type Item = Vec<SasVal>;
+    type Item = Result<Vec<SasVal>, SasError>;
 
     fn next(&mut self) -> Option<Self::Item>{
         match self.read_line(){
             Ok(true) => {
-                Some(self.row_vals.clone())
+                Some(Ok(self.row_vals.clone()))
             }
             Ok(false) => {
                 None
             }
-            Err(_) => panic!("Could not read all lines!"),
+            Err(er) => Some(Err(er)),
         }
     }
 }
@@ -403,19 +430,15 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
             _ => self.platform = "unknown".to_string(),
         }
         self.read_bytes(ENCODING_OFFSET, ENCODING_LENGTH)?;
-        match self.encoding_map.get(&usize::from(self.buf[0])) {
-            Some(x) => {
-                self.file_encoding = x.to_string();
-                match *x {
-                    "wlatin1" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1252),
-                    "wlatin2" => self.text_decoder = Encodings::SingleByte(*WINDOWS_1250),
-                    "utf-8" => self.text_decoder = Encodings::MultiByte(UTF8Encoding),
-                    _ => return Err(SasError::UnknownDecoder),
-                }
-            }
-            None => self.file_encoding = format!("Unspecified encoding: {}", self.buf[0]), 
 
+        match Encodings::new(usize::from(self.buf[0])){
+            Some(x) => self.text_decoder = x,
+            None => {
+                eprintln!("Unknown/Unsupported encoding : {}", usize::from(self.buf[0]));
+                return Err(SasError::UnknownDecoder);
+            }
         }
+
         self.read_bytes(DATASET_OFFSET, DATASET_LENGTH)?;
         self.name = self.utf_8(&self.buf[0..DATASET_LENGTH])?;
 
@@ -543,10 +566,8 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
             let mut compression_literal = "".to_string();
             //if col_name.conta ("SASYZCRL"){
             if contains_bytes(col_name, "SASYZCRL"){
-                println!("gotcha");
                 compression_literal = "SASYZCRL".to_string();
             } else if contains_bytes(col_name, "SASYZCR2") {
-                println!("gotcha");
                 compression_literal = "SASYZCR2".to_string();
             }
             self.compression = compression_literal;
@@ -1034,7 +1055,7 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                 float_buf : [0;8],
                 row_vals : Vec::new(),
                 col_formats : Vec::default(),
-                trim_strings : false,
+                trim_strings : true,
                 no_align_correction : false,
                 date_created : 0.,
                 date_modified : 0.,
@@ -1069,28 +1090,14 @@ impl<R : std::io::Read + std::io::Seek> SAS7bdat<R>{
                 col_data_lens : Vec::default(),
                 cols : Vec::default(),
                 props : SasProperties::default(),
-                encoding_map : get_encoding_map(),
                 hdr_sig_map : get_hdr_sig_map(),
             };
             sas.get_properties()?;
             sas.cached_page = vec![0;sas.props.page_len];
             sas.parse_metadata()?;
             sas.row_vals = vec![SasVal::Numeric(0.0);sas.props.col_cnt];
-            //println!("col count = {}", sas.cur_row_in_file_idx);
             Ok(sas)
         }
-    }
-
-
-    fn get_encoding_map() -> HashMap<usize, &'static str>{
-        HashMap::from([
-                      (29, "latin1"),
-                      (20, "utf-8"),
-                      (33, "cyrillic"),
-                      (60, "wlatin2"),//windows1250
-                      (61, "wcyrillic"),
-                      (62, "wlatin1"),//windows1252
-                      (90, "ebcdic870")])
     }
 
     fn rle_decompress(res_len : usize, input : &[u8]) -> Result<Vec<u8>, SasError>{
